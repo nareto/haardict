@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse.linalg as sslinalg
 import skimage.io
+from sklearn.linear_model import OrthogonalMatchingPursuit
 import gc
 import queue
 
@@ -111,15 +112,22 @@ def main():
     gc.collect()
     patches.sort(key=lambda p: p.eigid)
     root_node = Node(patches,None)
-    dictelems = root_node.compute_tree()
+    dictelems = ocDict(root_node.compute_tree())
     return(root_node,dictelems)
 
 class Patch():
-    def __init__(self,array,v1,v2):
+    def __init__(self,array,v1=None,v2=None):
         self.array = array
         self.v1 = v1
         self.v2 = v2
-        self.eigid = float(np.dot(np.dot(v1.transpose(),array),v2))
+        if v1 is not None and v2 is not None:
+            self.eigid = float(np.dot(np.dot(v1.transpose(),array),v2))
+
+    def show(self):
+        fig = plt.figure()
+        axis = fig.gca()
+        plt.imshow(self.array, cmap=plt.cm.gray,interpolation='none')
+        fig.show()
 
    #def __add__(self, other_patch):
    #    if self.v1 != other_patch.v1 or self.v2 != other_patch.v2:
@@ -162,8 +170,36 @@ class Node():
         self.children = [n1,n2]
         return(n1,n2)
 
-    
+class ocDict():
+    def __init__(self, patches):
+        self.patches = tuple(patches)
+        self.npatches = len(patches)
+        self.height,self.width = patches[0].shape
+        self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.patches])
+        self.sparse_coefs = None
+        
+    def save_pickle(self,filepath):
+        f = open(filepath,'wb')
+        pickle.dump(self.__dict__,f,3)
+        f.close()
 
-    
-    
+    def load_pickle(self,filepath):
+        f = open(filepath,'rb')
+        tmpdict = pickle.load(f)
+        f.close()
+        self.__dict__.update(tmpdict)
+
+    def sparse_code(self,input_patch,sparsity):
+        if input_patch.array.shape != self.patches[0].shape:
+            raise Exception("Input patch is not of the correct size")
+        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+        y = np.hstack(np.vsplit(input_patch.array,self.height)).transpose()
+        omp.fit(self.matrix,y)
+        return(omp.coef_)
+
+    def decode(self,coefs):
+        out = np.zeros_like(self.patches[0])
+        for idx in coefs.nonzero()[0]:
+            out += coefs[idx]*self.patches[idx]
+        return(out)
     
