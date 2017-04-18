@@ -10,9 +10,23 @@ from oct2py import octave
 import gc
 import queue
 
+def clip(img):
+    out = img.copy()
+    out[out < 0] = 0
+    out[out > 255] = 255
+    return(out)
+
 def stack(mat):
     out = np.hstack(np.vsplit(mat,mat.shape[0])).transpose()
     return(out)
+
+def psnr(img1,img2):
+    mse = np.sum((img1 - img2)**2)
+    if mse == 0:
+        return(-1)
+    mse /= img1.size
+    mse = np.sqrt(mse)
+    return(20*np.log10(255/mse))
 
 def HaarPSI(img1,img2):
     """Computes HaarPSI of img1 vs. img2. Requires file HaarPSI.m to be present in working directory"""
@@ -116,8 +130,7 @@ def covariance_matrix(patches, row_wise=False):
     ret /= len(patches)
     return(ret)
 
-def learn_dict():
-    images = []
+def learn_dict(eps=1.e-9):
     images_paths = []
     #for i in range(1):
     #    images.append(np.random.uniform(size=(200,300)))
@@ -129,7 +142,8 @@ def learn_dict():
                 images_paths.append(dirpath+'/'+f)
     #paths = images_paths[:2]
     #paths = ['/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg','/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/island.jpg']
-    paths = ['/Users/renato/ownCloud/phd/360_Colour_Items_1Moreno-Martinez_Montoro/Nature/cliff.jpg']
+    paths = ['/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg']
+    images = []
     for f in paths:
         images.append(skimage.io.imread(f,as_grey=True))
     print('Learning from images: %s' % paths)
@@ -138,7 +152,7 @@ def learn_dict():
         tmp_patches += extract_patches(i)
     G1 = covariance_matrix(tmp_patches)
     G2 = covariance_matrix(tmp_patches,True)
-    l1,v1 = sslinalg.eigs(G1,1)
+    l1,v1 = sslinalg.eigs(G1,1) 
     l2,v2 = sslinalg.eigs(G2,1)
     v1 = v1.real
     v2 = v2.real
@@ -149,20 +163,21 @@ def learn_dict():
     gc.collect()
     patches.sort(key=lambda p: p.eigid)
     root_node = Node(patches,None)
-    dictelems = ocDict(root_node.compute_tree(10))
-    return(root_node,dictelems)
+    dictionary = ocDict(root_node.compute_tree(10,eps),root_node)
+    return(dictionary)
 
-def fast_test_reconstruction(sparsity=40):
+def fast_test_patch_reconstruction(sparsity=40):
     ocdict = ocDict()
     ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2')
     #ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2-nonnormalized')
+    ocdict.shape = ocdict.patches[0].shape
     mountain = skimage.io.imread('/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/mountain.jpg',as_grey=True)
     mountain_patches = extract_patches(mountain)
     p1 = Patch(mountain_patches[3455])
-    test_reconstruction(ocdict,p1,sparsity=sparsity)
+    return(test_patch_reconstruction(ocdict,p1,sparsity=sparsity))
 
 
-def test_reconstruction(ocdict,patch=None,sparsity = 40):
+def test_patch_reconstruction(ocdict,patch=None,sparsity = 40):
     if patch is None:
         patch = Patch(np.random.uniform(size=ocdict.shape))
     coeffs = ocdict.sparse_code(patch,sparsity)
@@ -197,13 +212,52 @@ def test_reconstruction_patches(ocdict,patches=None,sparsity = 10):
     ax2.set_title = 'reconstructed'
     fig.show()
 
-    
-def test_denoise(ocdict):
-    sigma_noise = 12
-    psize = (ocdict.height,ocdict.width)
-    sparsity = 20
-
+def fast_test_reconstruction(sparsity=20,plot=False):
+    ocdict = ocDict()
+    ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2')
+    #ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2-nonnormalized')
+    ocdict.shape = ocdict.patches[0].shape
     #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Living_Things/Marine_creatures/lobster.jpg'
+    #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/mountain.jpg'
+    imgpath =  '/Users/renato/ownCloud/phd/code/epwt/img/cameraman256.png'
+    #imgpath =  '/Users/renato/ownCloud/phd/code/epwt/img/peppers256.png'
+    return(test_reconstruction(ocdict,imgpath,sparsity,plot))
+    
+def test_reconstruction(ocdict,imgpath,sparsity=20,plot=True):
+    psize = (ocdict.height,ocdict.width)
+    spars= sparsity
+
+    img = skimage.io.imread(imgpath,as_grey=True)
+    patches = extract_patches(img,size=psize)
+    outpatches = []
+    for p in patches:
+        outpatches.append(ocdict.decode(ocdict.sparse_code(Patch(p),spars)))
+    out = assemble_patches(outpatches,img.shape)
+    outclip = clip(out)
+    hpi = HaarPSI(img,out)
+    hpi_clip = HaarPSI(img,outclip)
+    print('HaarPSI = %f  %f' % (hpi,hpi_clip))
+    psnrval = psnr(img,out)
+    psnrval_clip = psnr(img,outclip)
+    print('PSNR = %f   %f' % (psnrval,psnrval_clip))
+    if plot:
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3)#, sharey=True)
+        #ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+        #ax2.imshow(out[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+        ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
+        ax2.imshow(out, cmap=plt.cm.gray,interpolation='none')
+        ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
+        fig.show()
+    return(img,out)
+    
+def test_denoise(sigma=12):
+    sigma_noise = sigma
+    sparsity = 20
+    ocdict = ocDict()
+    ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2')
+    ocdict.shape = ocdict.patches[0].shape
+    psize = (ocdict.height,ocdict.width)
+    #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Living_Things/Marine_creatures/lobster.jpg
     #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/mountain.jpg'
     imgpath =  '/Users/renato/ownCloud/phd/code/epwt/img/cameraman256.png'
     img = skimage.io.imread(imgpath,as_grey=True)
@@ -218,9 +272,12 @@ def test_denoise(ocdict):
     hpi2 = HaarPSI(255*img,255*out)
     print('hpi2 = %f' % hpi2)
     fig, (ax1, ax2,ax3) = plt.subplots(1, 3)#, sharey=True)
-    ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(imgn[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-    ax3.imshow(out[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+    #ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+    #ax2.imshow(imgn[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+    #ax3.imshow(out[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+    ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
+    ax2.imshow(imgn, cmap=plt.cm.gray,interpolation='none')
+    ax3.imshow(out, cmap=plt.cm.gray,interpolation='none')
     ax1.set_title = 'original'
     ax2.set_title = 'noisy'
     ax3.set_title = 'denoised'
@@ -264,6 +321,12 @@ class Node():
         self.children = None
         self.patches = tuple(patches)
         self.npatches = len(self.patches)
+
+    def build_patches_card_list(self):
+        out = []
+        for leaf in self.leafs:
+            out.append(leaf.npatches)
+        return(out)
         
     def save_pickle(self,filepath):
         f = open(filepath,'wb')
@@ -277,7 +340,7 @@ class Node():
         self.__dict__.update(tmpdict)
 
         
-    def compute_tree(self,minpatches=2):
+    def compute_tree(self,minpatches=2,epsilon=1.e-9):
         tovisit = queue.Queue()
         tovisit.put(self)
         dictelements = []
@@ -288,8 +351,8 @@ class Node():
         depth = 0
         while not tovisit.empty():
             cur = tovisit.get()
-            c1,c2 = cur.branch()
-            if cur.npatches <= minpatches or (c1 is None and c2 is None):
+            c1,c2 = cur.branch(epsilon,minpatches)
+            if c1 is None and c2 is None:
                 #in this case do not branch. we arrived at a leaf
                 self.leafs += [cur]
                 continue
@@ -312,20 +375,20 @@ class Node():
         self.depth = depth
         return(dictelements)
         
-    def branch(self):
+    def branch(self,epsilon,minpatches):
         if self.children is not None:
             raise Exception("Node already has children")
-        sep_idx,val,centroid_dist = oneDtwomeans([p.eigid for p in self.patches])
-        if centroid_dist > 1.e-9:
-            p1,p2 = self.patches[:sep_idx],self.patches[sep_idx:]
-            n1,n2 = Node(p1,self),Node(p2,self)
-            self.children = [n1,n2]
-        else:
-            n1,n2 = None,None
+        n1,n2 = None,None
+        if self.npatches > minpatches:
+            sep_idx,val,centroid_dist = oneDtwomeans([p.eigid for p in self.patches])
+            if centroid_dist > epsilon:
+                p1,p2 = self.patches[:sep_idx],self.patches[sep_idx:]
+                n1,n2 = Node(p1,self),Node(p2,self)
+                self.children = [n1,n2]
         return(n1,n2)
 
 class ocDict():
-    def __init__(self, patches=None):
+    def __init__(self, patches=None,root_node=None):
         if patches is not None:
             self.patches = tuple(patches)
             self.npatches = len(patches)
@@ -335,6 +398,7 @@ class ocDict():
             self.matrix_is_normalized = False
             self.normalize_matrix()
             self.shape = self.patches[0].shape
+        self.root_node = root_node
         self.sparse_coefs = None
         
     def save_pickle(self,filepath):
@@ -366,11 +430,11 @@ class ocDict():
         #omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True,tol=1)
         y = np.hstack(np.vsplit(input_patch.array,self.height)).transpose()
         if self.matrix_is_normalized:
-            omp.fit(self.normalized_matrix,y)
-            coef = omp.coef_
-            #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.normalized_matrix.astype('float64')).transpose()
+            #omp.fit(self.normalized_matrix,y)
+            #coef = omp.coef_
+            coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.normalized_matrix.astype('float64')).transpose()
             for idx,norm in np.ndenumerate(self.normalization_coefficients):
-                coef[idx] *= norm
+                coef[idx] /= norm
         else:
             omp.fit(self.matrix,y)
             coef = omp.coef_
@@ -381,7 +445,9 @@ class ocDict():
     def decode(self,coefs):
         out = np.zeros_like(self.patches[0])
         for idx in coefs.nonzero()[0]:
-            out += coefs[idx]*self.patches[idx]
+            #out += coefs[idx]*self.patches[idx]
+            out += coefs[idx]*self.matrix[:,idx].reshape(self.shape)
+            #out += coefs[idx]*self.normalized_matrix[:,idx].reshape(self.shape)
         #if out.min() < 0:
         #    out -= out.min()
         #out /= out.max()

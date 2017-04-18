@@ -13,8 +13,9 @@ def mysnorm(x):
         
 np.random.seed(234234430)
 n,m = 100,512
+reshape = (10,10)
 tolerance = 1e-10
-sparsity = 200
+sparsity = 80
 normalize = False
 sigma=0.1
 #normalize = True
@@ -39,7 +40,7 @@ if normalize:
 ##omp = OrthogonalMatchingPursuitCV(fit_intercept=True,normalize=True)
 ##omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True)
 ##omp = OrthogonalMatchingPursuit(tol=tolerance)
-omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)#,tol=tolerance)
+omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True)#,tol=tolerance)
 ##omp = OrthogonalMatchingPursuit()
 omp.fit(ocdict,y)
 coef = omp.coef_
@@ -70,3 +71,8 @@ out2 = np.dot(ocdict,coef)
 
 print('Number of coefficients used: %d\nError in sparse coding: %f\nOut2: %f' %\
       (len(coef.nonzero()[0]),np.linalg.norm(out - y), np.linalg.norm(out2-y)))
+
+fig,(ax1,ax2) = plt.subplots(1,2)
+ax1.imshow(y.reshape(reshape), cmap=plt.cm.gray,interpolation='none')
+ax2.imshow(out.reshape(reshape), cmap=plt.cm.gray,interpolation='none')
+fig.show()
