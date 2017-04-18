@@ -6,6 +6,7 @@ import numpy as np
 import scipy.sparse.linalg as sslinalg
 import skimage.io
 from sklearn.linear_model import OrthogonalMatchingPursuit
+from sklearn.cluster import KMeans
 from oct2py import octave
 import gc
 import queue
@@ -114,7 +115,7 @@ def assemble_patches(patches,out_size):
             idx += 1
     return(out)
     
-def covariance_matrix(patches, row_wise=False):
+def covariance_matrix(patches):
     centroid = sum(patches)/len(patches)
     if row_wise:
         m = centroid.shape[1]
@@ -122,199 +123,179 @@ def covariance_matrix(patches, row_wise=False):
         m = centroid.shape[0]
     ret = np.zeros(shape=(m,m))
     for patch in patches:
-        if row_wise:
-            addend = np.dot((patch - centroid).transpose(),(patch-centroid))
-        else:
-            addend = np.dot((patch - centroid),(patch-centroid).transpose())
+        addend = np.dot((patch - centroid).transpose(),(patch-centroid))
         ret += addend
     ret /= len(patches)
     return(ret)
 
-def learn_dict(eps=1.e-9):
-    images_paths = []
-    #for i in range(1):
-    #    images.append(np.random.uniform(size=(200,300)))
-    #starting_path = '/Users/renato/ownCloud/phd/bonin_et_al_pics_2009'
-    starting_path = '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature'
-    for dirpath,dirnames,filenames in os.walk(starting_path):
-        for f in filenames:
-            if f[-3:].upper() in  ['JPG','GIF','PNG']:
-                images_paths.append(dirpath+'/'+f)
-    #paths = images_paths[:2]
-    #paths = ['/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg','/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/island.jpg']
-    paths = ['/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg']
-    images = []
-    for f in paths:
-        images.append(skimage.io.imread(f,as_grey=True))
-    print('Learning from images: %s' % paths)
-    tmp_patches = []
-    for i in images:
-        tmp_patches += extract_patches(i)
-    G1 = covariance_matrix(tmp_patches)
-    G2 = covariance_matrix(tmp_patches,True)
-    l1,v1 = sslinalg.eigs(G1,1) 
-    l2,v2 = sslinalg.eigs(G2,1)
-    v1 = v1.real
-    v2 = v2.real
-    patches = []
-    for p in tmp_patches:
-        patches.append(Patch(p,v1,v2))
-    tmp_patches = None
-    gc.collect()
-    patches.sort(key=lambda p: p.eigid)
-    root_node = Node(patches,None)
-    dictionary = ocDict(root_node.compute_tree(10,eps),root_node)
-    return(dictionary)
-
-def fast_test_patch_reconstruction(sparsity=40):
-    ocdict = ocDict()
-    ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2')
-    #ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2-nonnormalized')
-    ocdict.shape = ocdict.patches[0].shape
-    mountain = skimage.io.imread('/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/mountain.jpg',as_grey=True)
-    mountain_patches = extract_patches(mountain)
-    p1 = Patch(mountain_patches[3455])
-    return(test_patch_reconstruction(ocdict,p1,sparsity=sparsity))
-
-
-def test_patch_reconstruction(ocdict,patch=None,sparsity = 40):
-    if patch is None:
-        patch = Patch(np.random.uniform(size=ocdict.shape))
-    coeffs = ocdict.sparse_code(patch,sparsity)
-    outpatch = ocdict.decode(coeffs)
-    fig,(ax1,ax2) = plt.subplots(1,2)
-    ax1.imshow(patch.array, cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(outpatch, cmap=plt.cm.gray,interpolation='none')
-    ax1.set_title = 'original'
-    ax2.set_title = 'reconstructed'
-    fig.show()
-    return(coeffs)
-
-def test_reconstruction_patches(ocdict,patches=None,sparsity = 10):
-    height,width = ocdict.shape
-    if patches is None:
-        patches = [Patch(np.random.uniform(size=ocdict.shape)),Patch(np.random.uniform(size=ocdict.shape))]
-    height *= len(patches)
-    img = np.vstack([x.array for x in patches])
-    #patch = Patch(np.hstack([x.array for x in patches]))
-    outpatches = []
-    for patch in patches:
-        outpatch = ocdict.decode(ocdict.sparse_code(patch,sparsity))
-        outpatches.append(outpatch)
-    result = assemble_patches(outpatches,(height,width))
-    #fig,(ax1,ax2) = plt.subplots(1,2)
-    fig,(ax1,ax2,ax3) = plt.subplots(1,3)
-    ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(result, cmap=plt.cm.gray,interpolation='none')
-    #ax2.imshow(outpatches[0], cmap=plt.cm.gray,interpolation='none')
-    ax3.imshow(outpatches[1], cmap=plt.cm.gray,interpolation='none')
-    ax1.set_title = 'original'
-    ax2.set_title = 'reconstructed'
-    fig.show()
-
-def fast_test_reconstruction(sparsity=20,plot=False):
-    ocdict = ocDict()
-    ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2')
-    #ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2-nonnormalized')
-    ocdict.shape = ocdict.patches[0].shape
-    #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Living_Things/Marine_creatures/lobster.jpg'
-    #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/mountain.jpg'
-    imgpath =  '/Users/renato/ownCloud/phd/code/epwt/img/cameraman256.png'
-    #imgpath =  '/Users/renato/ownCloud/phd/code/epwt/img/peppers256.png'
-    return(test_reconstruction(ocdict,imgpath,sparsity,plot))
-    
-def test_reconstruction(ocdict,imgpath,sparsity=20,plot=True):
-    psize = (ocdict.height,ocdict.width)
-    spars= sparsity
-
-    img = skimage.io.imread(imgpath,as_grey=True)
-    patches = extract_patches(img,size=psize)
-    outpatches = []
-    for p in patches:
-        outpatches.append(ocdict.decode(ocdict.sparse_code(Patch(p),spars)))
-    out = assemble_patches(outpatches,img.shape)
-    outclip = clip(out)
-    hpi = HaarPSI(img,out)
-    hpi_clip = HaarPSI(img,outclip)
-    print('HaarPSI = %f  %f' % (hpi,hpi_clip))
-    psnrval = psnr(img,out)
-    psnrval_clip = psnr(img,outclip)
-    print('PSNR = %f   %f' % (psnrval,psnrval_clip))
-    if plot:
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3)#, sharey=True)
-        #ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-        #ax2.imshow(out[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-        ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
-        ax2.imshow(out, cmap=plt.cm.gray,interpolation='none')
-        ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
-        fig.show()
-    return(img,out)
-    
-def test_denoise(sigma=12):
-    sigma_noise = sigma
-    sparsity = 20
-    ocdict = ocDict()
-    ocdict.load_pickle('/Users/renato/ownCloud/phd/code/2ddict/ocdict-MMM-Nature-2')
-    ocdict.shape = ocdict.patches[0].shape
-    psize = (ocdict.height,ocdict.width)
-    #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Living_Things/Marine_creatures/lobster.jpg
-    #imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Nature/mountain.jpg'
-    imgpath =  '/Users/renato/ownCloud/phd/code/epwt/img/cameraman256.png'
-    img = skimage.io.imread(imgpath,as_grey=True)
-    imgn = img + np.random.normal(0,sigma_noise,size=img.shape)
-    hpi1 = HaarPSI(255*img,255*imgn)
-    print('hpi1 = %f' % hpi1)
-    patches = extract_patches(imgn,size=psize)
-    outpatches = []
-    for p in patches:
-        outpatches.append(ocdict.decode(ocdict.sparse_code(Patch(p),sparsity)))
-    out = assemble_patches(outpatches,img.shape)
-    hpi2 = HaarPSI(255*img,255*out)
-    print('hpi2 = %f' % hpi2)
-    fig, (ax1, ax2,ax3) = plt.subplots(1, 3)#, sharey=True)
-    #ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-    #ax2.imshow(imgn[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-    #ax3.imshow(out[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
-    ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(imgn, cmap=plt.cm.gray,interpolation='none')
-    ax3.imshow(out, cmap=plt.cm.gray,interpolation='none')
-    ax1.set_title = 'original'
-    ax2.set_title = 'noisy'
-    ax3.set_title = 'denoised'
-    fig.show()
-    return(img,imgn,out)
-
-def test_assembling():
-    imgpath =  '/Users/renato/ownCloud/phd/360_Colour_Items_Moreno-Martinez_Montoro/Living_Things/Marine_creatures/lobster.jpg'
-    img = skimage.io.imread(imgpath,as_grey=True)
-    patches = extract_patches(img,size=(8,8))
-    out = assemble_patches(patches,img.shape)
-    fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True)
-    ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(out, cmap=plt.cm.gray,interpolation='none')
-    ax1.set_title = 'original'
-    ax2.set_title = 're assembled'
-    fig.show()
-
 class Patch():
-    def __init__(self,array,v1=None,v2=None):
-        self.array = array
-        self.v1 = v1
-        self.v2 = v2
-        if v1 is not None and v2 is not None:
-            self.eigid = float(np.dot(np.dot(v1.transpose(),array),v2))
+    def __init__(self,matrix):
+        self.matrix = matrix
+        self.feature_matrix = None
 
+    def compute_feature_matrix(self,U,V):
+        self.feature_matrix = np.dot(np.dot(V.transpose(),self.matrix),U)
+        
     def show(self):
         fig = plt.figure()
         axis = fig.gca()
         plt.imshow(self.array, cmap=plt.cm.gray,interpolation='none')
         fig.show()
 
-   #def __add__(self, other_patch):
-   #    if self.v1 != other_patch.v1 or self.v2 != other_patch.v2:
-   #        raise Exception("You shouldn't do this")
-   #    return(Patch(self.array+other_patch.array,self.v1,self.v2))
+class twodpca():
+    def __init__(self,patches,l=-1,r=-1):
+        self.l = l
+        self.r = r
+        self.patches = tuple(patches)
+        self.bilateral_computed = False
         
+    def compute_horizzontal_2dpca(self):
+        cov = covariance_matrix([p.array for p in self.patches])
+        eigenvalues,U = sslinalg.eigs(cov,l) 
+        self.U = U.real
+        
+    def compute_vertical_2dpca(self):
+        cov = covariance_matrix([p.array.transpose() for p in self.patches])
+        eigenvalues,V = sslinalg.eigs(cov,r) 
+        self.V = V.real
+        
+    def compute_simple_bilateral_2dpca(self):
+        if self.bilateral_computed:
+            raise Exception('Bilateral 2dpca already computed')
+        self.compute_horizzontal_2dpca()
+        self.compute_vertical_2dpca()
+        self.bilateral_computed = True
+    
+    def compute_simple_bilateral_2dpca(self):
+        if self.bilateral_computed:
+            raise Exception('Bilateral 2dpca already computed')
+        #TODO: implement
+
+        
+
+class ocdict():
+    def __init__(self, patches):
+        self.patches = tuple(patches)
+        self.npatches = len(patches)
+        #self.height,self.width = patches[0].shape
+        self.shape = self.patches[0].shape
+        #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.patches])
+        #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
+        #self.matrix_is_normalized = False
+        #self.normalize_matrix()
+        #self.sparse_coefs = None
+        self.root_node = root_node
+
+        
+    def save_pickle(self,filepath):
+        f = open(filepath,'wb')
+        pickle.dump(self.__dict__,f,3)
+        f.close()
+
+    def load_pickle(self,filepath):
+        f = open(filepath,'rb')
+        tmpdict = pickle.load(f)
+        f.close()
+        self.__dict__.update(tmpdict)
+
+    def normalize_matrix(self):
+        self.normalized_matrix = np.copy(self.matrix)
+        ncols = self.matrix.shape[1]
+        for j in range(ncols):
+            col = self.normalized_matrix[:,j]
+            norm = np.linalg.norm(col)
+            col /= norm
+            self.normalization_coefficients[j] = norm
+        self.matrix_is_normalized = True
+
+    def slink_kmeans_cluster(self):
+        pass
+
+    def 2means_cluster(self,minpatches=2,epsilon=1.e-2):
+        self.root = Node(tuple(np.arange(self.npatches)),None)
+        tovisit = queue.Queue()
+        tovisit.put(self)
+        #dictelements = []
+        #self.leafs = []
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
+        depth = 0
+        patches_matrix = np.vstack([p.array.flatten() for p in self.patches]) 
+        while not tovisit.empty():
+            cur = tovisit.get()
+            if cur.npatches > minpatches:
+                km = KMeans(n_clusters=2).fit(patches_matrix[np.array(cur.patches)])
+                if km.inertia_ > epsilon:
+                    lpatches = []
+                    rpatches = []
+                    for idx,label in enumerate(km.labels_):
+                        if label == 0:
+                            lpatches.append(cur.patches[idx])
+                        if label == 1:
+                            rpatches.append(cur.patches[idx])
+                    lnode = Node(lpatches,cur)
+                    rnode = Node(rpatches,cur)
+                    cur.children = (lnode,rnode)
+                    tovisit.put(lnode)
+                    tovisit.put(rnode)
+            #c1,c2 = cur.branch(epsilon,minpatches)
+            #if c1 is None and c2 is None:
+            #    #in this case do not branch. we arrived at a leaf
+            #    self.leafs += [cur]
+            #    continue
+            #if cur in prev_nodes:
+            #    cur_nodes.add(c1)
+            #    cur_nodes.add(c2)
+            #else:
+            #    prev_nodes = cur_nodes
+            #    cur_nodes = set()
+            #    depth += 1
+            #centroid1 = sum([p.array for p in c1.patches])
+            #centroid2 = sum([p.array for p in c2.patches])
+            #curdict = centroid1/c1.npatches - centroid2/c2.npatches
+            #if np.linalg.norm(curdict) < 1.e-3:
+            #    ipdb.set_trace()
+            #dictelements += [curdict]
+            #tovisit.put(c1)
+            #tovisit.put(c2)
+        self.dictelements = dictelements
+        self.depth = depth
+        return(dictelements)
+
+
+        
+    def sparse_code(self,input_patch,sparsity):
+        if input_patch.array.shape != self.patches[0].shape:
+            raise Exception("Input patch is not of the correct size")
+        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
+        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
+        #omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True,tol=1)
+        y = np.hstack(np.vsplit(input_patch.array,self.height)).transpose()
+        if self.matrix_is_normalized:
+            #omp.fit(self.normalized_matrix,y)
+            #coef = omp.coef_
+            coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.normalized_matrix.astype('float64')).transpose()
+            for idx,norm in np.ndenumerate(self.normalization_coefficients):
+                coef[idx] /= norm
+        else:
+            omp.fit(self.matrix,y)
+            coef = omp.coef_
+            #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
+        #print('Error in sparse coding: %f' % np.linalg.norm(input_patch.array - self.decode(coef)))
+        return(coef)
+
+    def decode(self,coefs):
+        out = np.zeros_like(self.patches[0])
+        for idx in coefs.nonzero()[0]:
+            #out += coefs[idx]*self.patches[idx]
+            out += coefs[idx]*self.matrix[:,idx].reshape(self.shape)
+            #out += coefs[idx]*self.normalized_matrix[:,idx].reshape(self.shape)
+        #if out.min() < 0:
+        #    out -= out.min()
+        #out /= out.max()
+        return(out)
+    
 class Node():
     def __init__(self,patches,parent):
         self.parent = parent
@@ -328,17 +309,6 @@ class Node():
             out.append(leaf.npatches)
         return(out)
         
-    def save_pickle(self,filepath):
-        f = open(filepath,'wb')
-        pickle.dump(self.__dict__,f,3)
-        f.close()
-
-    def load_pickle(self,filepath):
-        f = open(filepath,'rb')
-        tmpdict = pickle.load(f)
-        f.close()
-        self.__dict__.update(tmpdict)
-
         
     def compute_tree(self,minpatches=2,epsilon=1.e-9):
         tovisit = queue.Queue()
@@ -386,70 +356,3 @@ class Node():
                 n1,n2 = Node(p1,self),Node(p2,self)
                 self.children = [n1,n2]
         return(n1,n2)
-
-class ocDict():
-    def __init__(self, patches=None,root_node=None):
-        if patches is not None:
-            self.patches = tuple(patches)
-            self.npatches = len(patches)
-            self.height,self.width = patches[0].shape
-            self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.patches])
-            self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
-            self.matrix_is_normalized = False
-            self.normalize_matrix()
-            self.shape = self.patches[0].shape
-        self.root_node = root_node
-        self.sparse_coefs = None
-        
-    def save_pickle(self,filepath):
-        f = open(filepath,'wb')
-        pickle.dump(self.__dict__,f,3)
-        f.close()
-
-    def load_pickle(self,filepath):
-        f = open(filepath,'rb')
-        tmpdict = pickle.load(f)
-        f.close()
-        self.__dict__.update(tmpdict)
-
-    def normalize_matrix(self):
-        self.normalized_matrix = np.copy(self.matrix)
-        ncols = self.matrix.shape[1]
-        for j in range(ncols):
-            col = self.normalized_matrix[:,j]
-            norm = np.linalg.norm(col)
-            col /= norm
-            self.normalization_coefficients[j] = norm
-        self.matrix_is_normalized = True
-        
-    def sparse_code(self,input_patch,sparsity):
-        if input_patch.array.shape != self.patches[0].shape:
-            raise Exception("Input patch is not of the correct size")
-        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
-        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
-        #omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True,tol=1)
-        y = np.hstack(np.vsplit(input_patch.array,self.height)).transpose()
-        if self.matrix_is_normalized:
-            #omp.fit(self.normalized_matrix,y)
-            #coef = omp.coef_
-            coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.normalized_matrix.astype('float64')).transpose()
-            for idx,norm in np.ndenumerate(self.normalization_coefficients):
-                coef[idx] /= norm
-        else:
-            omp.fit(self.matrix,y)
-            coef = omp.coef_
-            #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
-        #print('Error in sparse coding: %f' % np.linalg.norm(input_patch.array - self.decode(coef)))
-        return(coef)
-
-    def decode(self,coefs):
-        out = np.zeros_like(self.patches[0])
-        for idx in coefs.nonzero()[0]:
-            #out += coefs[idx]*self.patches[idx]
-            out += coefs[idx]*self.matrix[:,idx].reshape(self.shape)
-            #out += coefs[idx]*self.normalized_matrix[:,idx].reshape(self.shape)
-        #if out.min() < 0:
-        #    out -= out.min()
-        #out /= out.max()
-        return(out)
-    
