@@ -211,12 +211,12 @@ class ocdict():
     def slink_kmeans_cluster(self):
         pass
 
-    def 2means_cluster(self,minpatches=2,epsilon=1.e-2):
+    def twomeans_cluster(self,minpatches=2,epsilon=1.e-2):
         self.root = Node(tuple(np.arange(self.npatches)),None)
         tovisit = queue.Queue()
         tovisit.put(self)
         #dictelements = []
-        #self.leafs = []
+        self.leafs = []
         cur_nodes = set()
         prev_nodes = set()
         prev_nodes.add(self)
@@ -224,11 +224,11 @@ class ocdict():
         patches_matrix = np.vstack([p.array.flatten() for p in self.patches]) 
         while not tovisit.empty():
             cur = tovisit.get()
+            lpatches = []
+            rpatches = []
             if cur.npatches > minpatches:
                 km = KMeans(n_clusters=2).fit(patches_matrix[np.array(cur.patches)])
                 if km.inertia_ > epsilon:
-                    lpatches = []
-                    rpatches = []
                     for idx,label in enumerate(km.labels_):
                         if label == 0:
                             lpatches.append(cur.patches[idx])
@@ -239,6 +239,8 @@ class ocdict():
                     cur.children = (lnode,rnode)
                     tovisit.put(lnode)
                     tovisit.put(rnode)
+            if len(lpatches) == 0 and len(rpatches) == 0:
+                self.leafs.append(cur)
             #c1,c2 = cur.branch(epsilon,minpatches)
             #if c1 is None and c2 is None:
             #    #in this case do not branch. we arrived at a leaf
