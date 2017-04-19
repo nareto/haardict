@@ -1,7 +1,10 @@
 import gc
-from twoDdict import *
+#from twoDdict import *
+import twoDdict
+import os
+import skimage.io
 
-def learn_dict(eps=1.e-9):
+def learn_dict():
     images_paths = []
     #for i in range(1):
     #    images.append(np.random.uniform(size=(200,300)))
@@ -18,24 +21,22 @@ def learn_dict(eps=1.e-9):
     for f in paths:
         images.append(skimage.io.imread(f,as_grey=True))
     print('Learning from images: %s' % paths)
-    tmp_patches = []
-    for i in images:
-        tmp_patches += extract_patches(i)
-    G1 = covariance_matrix(tmp_patches)
-    G2 = covariance_matrix(tmp_patches,True)
-    l1,v1 = sslinalg.eigs(G1,1) 
-    l2,v2 = sslinalg.eigs(G2,1)
-    v1 = v1.real
-    v2 = v2.real
+
     patches = []
-    for p in tmp_patches:
-        patches.append(Patch(p,v1,v2))
-    tmp_patches = None
-    gc.collect()
-    patches.sort(key=lambda p: p.eigid)
-    root_node = Node(patches,None)
-    dictionary = ocDict(root_node.compute_tree(10,eps),root_node)
-    return(dictionary)
+    for i in images:
+        patches += [twoDdict.Patch(p) for p in twoDdict.extract_patches(i)]
+
+    twodpca = twoDdict.twodpca(patches,l=1,r=1)
+    #ipdb.set_trace()
+    twodpca.compute_simple_bilateral_2dpca()
+
+    for p in patches:
+        p.compute_feature_matrix(twodpca.U,twodpca.V)
+
+    ocd = twoDdict.ocdict(patches)
+    ocd.twomeans_cluster()
+
+    return(ocd)
 
 def fast_test_patch_reconstruction(sparsity=40):
     ocdict = ocDict()

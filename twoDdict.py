@@ -117,11 +117,8 @@ def assemble_patches(patches,out_size):
     
 def covariance_matrix(patches):
     centroid = sum(patches)/len(patches)
-    if row_wise:
-        m = centroid.shape[1]
-    else:
-        m = centroid.shape[0]
-    ret = np.zeros(shape=(m,m))
+    p = patches[0]
+    ret = np.zeros_like(np.dot(p.transpose(),p))
     for patch in patches:
         addend = np.dot((patch - centroid).transpose(),(patch-centroid))
         ret += addend
@@ -139,24 +136,24 @@ class Patch():
     def show(self):
         fig = plt.figure()
         axis = fig.gca()
-        plt.imshow(self.array, cmap=plt.cm.gray,interpolation='none')
+        plt.imshow(self.matrix, cmap=plt.cm.gray,interpolation='none')
         fig.show()
 
 class twodpca():
     def __init__(self,patches,l=-1,r=-1):
         self.l = l
         self.r = r
-        self.patches = tuple(patches)
+        self.patches = tuple(patches) #original image patches
         self.bilateral_computed = False
         
     def compute_horizzontal_2dpca(self):
-        cov = covariance_matrix([p.array for p in self.patches])
-        eigenvalues,U = sslinalg.eigs(cov,l) 
+        cov = covariance_matrix([p.matrix for p in self.patches])
+        eigenvalues,U = sslinalg.eigs(cov,self.l)
         self.U = U.real
         
     def compute_vertical_2dpca(self):
-        cov = covariance_matrix([p.array.transpose() for p in self.patches])
-        eigenvalues,V = sslinalg.eigs(cov,r) 
+        cov = covariance_matrix([p.matrix.transpose() for p in self.patches])
+        eigenvalues,V = sslinalg.eigs(cov,self.r) 
         self.V = V.real
         
     def compute_simple_bilateral_2dpca(self):
@@ -166,7 +163,7 @@ class twodpca():
         self.compute_vertical_2dpca()
         self.bilateral_computed = True
     
-    def compute_simple_bilateral_2dpca(self):
+    def compute_iterative_bilateral_2dpca(self):
         if self.bilateral_computed:
             raise Exception('Bilateral 2dpca already computed')
         #TODO: implement
@@ -175,17 +172,18 @@ class twodpca():
 
 class ocdict():
     def __init__(self, patches):
-        self.patches = tuple(patches)
+        self.patches = tuple(patches) #original image patches
         self.npatches = len(patches)
         #self.height,self.width = patches[0].shape
-        self.shape = self.patches[0].shape
+        #self.shape = self.patches[0].matrix.shape
         #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.patches])
         #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
         #self.matrix_is_normalized = False
         #self.normalize_matrix()
         #self.sparse_coefs = None
-        self.root_node = root_node
-
+        self.root_node = None
+        self.clustered = False
+        self.matrix_created = False
         
     def save_pickle(self,filepath):
         f = open(filepath,'wb')
@@ -198,6 +196,17 @@ class ocdict():
         f.close()
         self.__dict__.update(tmpdict)
 
+    def _create_matrix(self):
+        if not self.clustered:
+            raise Exception("You need to cluster the patches first")
+        #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
+        self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
+        self.matrix_created = True
+        #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
+        #self.matrix_is_normalized = False
+        #self.normalize_matrix()
+        
+        
     def normalize_matrix(self):
         self.normalized_matrix = np.copy(self.matrix)
         ncols = self.matrix.shape[1]
@@ -211,17 +220,17 @@ class ocdict():
     def slink_kmeans_cluster(self):
         pass
 
-    def twomeans_cluster(self,minpatches=2,epsilon=1.e-2):
-        self.root = Node(tuple(np.arange(self.npatches)),None)
+    def twomeans_cluster(self,minpatches=5,epsilon=1.e-2):
+        self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = queue.Queue()
-        tovisit.put(self)
-        #dictelements = []
+        tovisit.put(self.root_node)
+        dictelements = []
         self.leafs = []
         cur_nodes = set()
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        patches_matrix = np.vstack([p.array.flatten() for p in self.patches]) 
+        patches_matrix = np.vstack([p.matrix.flatten() for p in self.patches]) 
         while not tovisit.empty():
             cur = tovisit.get()
             lpatches = []
@@ -239,41 +248,33 @@ class ocdict():
                     cur.children = (lnode,rnode)
                     tovisit.put(lnode)
                     tovisit.put(rnode)
+                    depth = max((depth,lnode.depth,rnode.depth))
+                    centroid1 = sum([self.patches[i].matrix for i in lpatches])
+                    centroid2 = sum([self.patches[i].matrix for i in rpatches])
+                    curdict = centroid1/lnode.npatches - centroid2/rnode.npatches
+                    if np.linalg.norm(curdict) < 1.e-3:
+                        ipdb.set_trace()
+                    dictelements += [curdict]
+                    
             if len(lpatches) == 0 and len(rpatches) == 0:
                 self.leafs.append(cur)
-            #c1,c2 = cur.branch(epsilon,minpatches)
-            #if c1 is None and c2 is None:
-            #    #in this case do not branch. we arrived at a leaf
-            #    self.leafs += [cur]
-            #    continue
-            #if cur in prev_nodes:
-            #    cur_nodes.add(c1)
-            #    cur_nodes.add(c2)
-            #else:
-            #    prev_nodes = cur_nodes
-            #    cur_nodes = set()
-            #    depth += 1
-            #centroid1 = sum([p.array for p in c1.patches])
-            #centroid2 = sum([p.array for p in c2.patches])
-            #curdict = centroid1/c1.npatches - centroid2/c2.npatches
-            #if np.linalg.norm(curdict) < 1.e-3:
-            #    ipdb.set_trace()
-            #dictelements += [curdict]
-            #tovisit.put(c1)
-            #tovisit.put(c2)
         self.dictelements = dictelements
-        self.depth = depth
+        self.tree_depth = depth
+        self.clustered = True
         return(dictelements)
 
 
         
     def sparse_code(self,input_patch,sparsity):
-        if input_patch.array.shape != self.patches[0].shape:
+        if input_patch.matrix.shape != self.patches[0].shape:
             raise Exception("Input patch is not of the correct size")
+        if not self.created_matrix:
+            self._create_matrix()
         omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
         #omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True,tol=1)
-        y = np.hstack(np.vsplit(input_patch.array,self.height)).transpose()
+        #y = np.hstack(np.vsplit(input_patch.matrix,self.height)).transpose()
+        y = input_patch.flatten()
         if self.matrix_is_normalized:
             #omp.fit(self.normalized_matrix,y)
             #coef = omp.coef_
@@ -284,7 +285,7 @@ class ocdict():
             omp.fit(self.matrix,y)
             coef = omp.coef_
             #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
-        #print('Error in sparse coding: %f' % np.linalg.norm(input_patch.array - self.decode(coef)))
+        #print('Error in sparse coding: %f' % np.linalg.norm(input_patch.matrix - self.decode(coef)))
         return(coef)
 
     def decode(self,coefs):
@@ -301,9 +302,16 @@ class ocdict():
 class Node():
     def __init__(self,patches,parent):
         self.parent = parent
+        if parent is None:
+            self.depth = 0
+        else:
+            self.depth = self.parent.depth + 1
         self.children = None
-        self.patches = tuple(patches)
+        self.patches = tuple(patches) #indexes of d.patches where d is an ocdict
         self.npatches = len(self.patches)
+
+    def patches_list(self,ocdict):
+        return([ocdict.patches[i] for i in self.patches])
 
     def build_patches_card_list(self):
         out = []
@@ -335,8 +343,8 @@ class Node():
                 prev_nodes = cur_nodes
                 cur_nodes = set()
                 depth += 1
-            centroid1 = sum([p.array for p in c1.patches])
-            centroid2 = sum([p.array for p in c2.patches])
+            centroid1 = sum([p.matrix for p in c1.patches])
+            centroid2 = sum([p.matrix for p in c2.patches])
             curdict = centroid1/c1.npatches - centroid2/c2.npatches
             if np.linalg.norm(curdict) < 1.e-3:
                 ipdb.set_trace()
