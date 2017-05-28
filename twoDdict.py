@@ -152,7 +152,7 @@ def learn_dict(paths,l=2,r=2):
 
 class Patch():
     def __init__(self,matrix):
-        self.matrix = matrix
+        self.matrix = matrix.astype('float64')
         self.feature_matrix = None
 
     def compute_feature_matrix(self,U,V):
@@ -365,11 +365,14 @@ class ocdict():
         if not self.matrix_computed:
             self._compute_matrix()
             self.normalize_matrix()
+        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
         #omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True,tol=1)
         #y = np.hstack(np.vsplit(input_patch.matrix,self.height)).transpose()
         y = input_patch.matrix.flatten()
+        mean = np.mean(y)
+        y -= mean
         if self.matrix_is_normalized:
             #omp.fit(self.normalized_matrix,y)
             #coef = omp.coef_
@@ -381,13 +384,14 @@ class ocdict():
             for idx,norm in np.ndenumerate(self.normalization_coefficients):
                 coef[idx] /= norm
         else:
-            #omp.fit(self.matrix,y)
-            #coef = omp.coef_
-            coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
+            omp.fit(self.matrix,y)
+            coef = omp.coef_
+            #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
+        #coef += mean
         #print('Error in sparse coding: %f' % np.linalg.norm(input_patch.matrix - self.decode(coef)))
-        return(coef)
+        return(coef,mean)
 
-    def decode(self,coefs):
+    def decode(self,coefs,mean):
         out = np.zeros_like(self.patches[0].matrix)
         for idx in coefs.nonzero()[0]:
             #out += coefs[idx]*self.patches[idx]
@@ -396,7 +400,7 @@ class ocdict():
         #if out.min() < 0:
         #    out -= out.min()
         #out /= out.max()
-        return(out)
+        return(out+mean)
     
 class Node():
     def __init__(self,patches_idx,parent):

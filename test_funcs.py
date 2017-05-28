@@ -41,8 +41,8 @@ def fast_test_patch_reconstruction(sparsity=40):
 def test_patch_reconstruction(ocdict,patch=None,sparsity = 40):
     if patch is None:
         patch = twoDdict.Patch(np.random.uniform(size=ocdict.shape))
-    coeffs = ocdict.sparse_code(patch,sparsity)
-    outpatch = ocdict.decode(coeffs)
+    coefs,mean = ocdict.sparse_code(patch,sparsity)
+    outpatch = ocdict.decode(coefs,mean)
     fig,(ax1,ax2) = plt.subplots(1,2)
     ax1.imshow(patch.matrix, cmap=plt.cm.gray,interpolation='none')
     ax2.imshow(outpatch, cmap=plt.cm.gray,interpolation='none')
@@ -60,7 +60,8 @@ def test_reconstruction_patches(ocdict,patches=None,sparsity = 10):
     #patch = Patch(np.hstack([x.array for x in patches]))
     outpatches = []
     for patch in patches:
-        outpatch = ocdict.decode(ocdict.sparse_code(patch,sparsity))
+        coefs,mean = ocdict.sparse_code(patch,sparsity)
+        outpatch = ocdict.decode(coefs,mean)
         outpatches.append(outpatch)
     result = assemble_patches(outpatches,(height,width))
     #fig,(ax1,ax2) = plt.subplots(1,2)
@@ -75,8 +76,8 @@ def test_reconstruction_patches(ocdict,patches=None,sparsity = 10):
 
 def fast_test_reconstruction(sparsity=20,clip=True,plot=False):
     ocdict = twoDdict.ocdict()
-    #ocdict.load_pickle('./ocd-ccg-nonnormalized')
-    ocdict.load_pickle('./ocd-seis0+2-nonnormalized')
+    ocdict.load_pickle('./ocd-ccg-nonnormalized')
+    #ocdict.load_pickle('./ocd-seis0+2-nonnormalized')
     twodpca = twoDdict.twodpca()
     twodpca.load_pickle('./twodpca-ccg')
     #ocdict.load_pickle('./ocdict-MMM-Nature-2')
@@ -102,7 +103,8 @@ def test_reconstruction(ocdict,imgpath,sparsity=20,clip=True,plot=True):
     patches = twoDdict.extract_patches(img,size=psize)
     outpatches = []
     for p in patches:
-        outpatches.append(ocdict.decode(ocdict.sparse_code(twoDdict.Patch(p),spars)))
+        coefs,mean = ocdict.sparse_code(twoDdict.Patch(p),spars)
+        outpatches.append(ocdict.decode(coefs,mean))
     out = twoDdict.assemble_patches(outpatches,img.shape)
     if clip:
         out = twoDdict.clip(out)
