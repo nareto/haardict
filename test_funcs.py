@@ -6,7 +6,7 @@ import twoDdict
 import os
 import skimage.io
 
-def test_learn_dict(l=2,r=2):
+def test_learn_dict(l=2,r=2,twomeans_on_patches=True,haar_dict_on_patches=True):
     images_paths = []
     #for i in range(1):
     #    images.append(np.random.uniform(size=(200,300)))
@@ -22,7 +22,8 @@ def test_learn_dict(l=2,r=2):
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/cloud.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/gold.jpg']
     paths = ['seis0_orig.eps','seis2_orig.eps']
-    return(twoDdict.learn_dict(paths,l,r))
+    #paths = ['seis0_orig.eps']
+    return(twoDdict.learn_dict(paths,twomeans_on_patches,haar_dict_on_patches,l,r))
 
 
 def fast_test_patch_reconstruction(sparsity=40):
@@ -92,7 +93,7 @@ def fast_test_reconstruction(sparsity=20,clip=True,plot=False):
     #imgpath =  './code/epwt/img/peppers256.png'
     return(test_reconstruction(ocdict,imgpath,sparsity,clip,plot))
     
-def test_reconstruction(ocdict,imgpath,sparsity=20,clip=True,plot=True):
+def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True):
     psize = (ocdict.height,ocdict.width)
     spars= sparsity
 

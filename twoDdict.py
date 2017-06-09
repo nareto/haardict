@@ -11,6 +11,15 @@ from oct2py import octave
 import gc
 import queue
 
+def rescale(img,newmin=0,newmax=255):
+    curmin,curmax = img.min(),img.max()
+    angcoeff = (newmax-newmin)/(curmax-curmin)
+    f = lambda x: newmax+angcoeff*(x-curmax)
+    out = np.zeros_like(img)
+    for idx,val in np.ndenumerate(img):
+        out[idx] = f(val)
+    return(out)
+
 def clip(img):
     out = img.copy()
     out[out < 0] = 0
@@ -125,7 +134,7 @@ def covariance_matrix(patches):
     ret /= len(patches)
     return(ret)
 
-def learn_dict(paths,l=2,r=2):
+def learn_dict(paths,twomeans_on_patches=True,haar_dict_on_patches=True,l=2,r=2):
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -141,11 +150,12 @@ def learn_dict(paths,l=2,r=2):
     twodpca_instance = twodpca(patches,l,r)
     twodpca_instance.compute_simple_bilateral_2dpca()
 
-    for p in patches:
-        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
+    if not (twomeans_on_patches and haar_dict_on_patches):
+        for p in patches:
+            p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    ocd.twomeans_cluster()
+    ocd.twomeans_cluster(twomeans_on_patches,haar_dict_on_patches)
 
     return(twodpca_instance,ocd)
 
@@ -158,6 +168,29 @@ class Patch():
     def compute_feature_matrix(self,U,V):
         self.feature_matrix = np.dot(np.dot(V.transpose(),self.matrix),U)
         
+    def __add__(self,patch):
+        newmat = self.matrix + patch.matrix
+        p = Patch(newmat)
+        if self.feature_matrix is not None and patch.feature_matrix is not None:
+            p.feature_matrix = self.feature_matrix + patch.feature_matrix
+        return(p)
+
+    def __mul__(self,scalar):
+        newmat = scalar*self.matrix
+        p = Patch(newmat)
+        if self.feature_matrix is not None:
+            p.feature_matrix = scalar*self.feature_matrix
+        return(p)
+        
+    def __rmul__(self,scalar):
+        return(self.__mul__(scalar))
+    
+    def __truediv__(self,scalar):
+        return(self.__mul__(1/scalar))
+
+    def __sub__(self,other):
+        return(self+((-1)*other))
+    
     def show(self):
         fig = plt.figure()
         axis = fig.gca()
@@ -219,11 +252,13 @@ class ocdict():
         #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.patches])
         #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
         self.matrix_is_normalized = False
+        self.feature_matrix_is_normalized = False
         #self.normalize_matrix()
         #self.sparse_coefs = None
         self.root_node = None
         self.clustered = False
         self.matrix_computed = False
+        self.feature_matrix_computed = False
         
     def save_pickle(self,filepath):
         f = open(filepath,'wb')
@@ -240,12 +275,19 @@ class ocdict():
         if not self.clustered:
             raise Exception("You need to cluster the patches first")
         #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
-        self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
+        self.matrix = np.vstack([x.matrix.flatten() for x in self.dictelements]).transpose()
         self.matrix_computed = True
         #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
         #self.matrix_is_normalized = False
         #self.normalize_matrix()
 
+    def _compute_feature_matrix(self):
+        if not self.clustered:
+            raise Exception("You need to cluster the patches first")
+        #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
+        self.feature_matrix = np.vstack([x.feature_matrix.flatten() for x in self.dictelements]).transpose()
+        self.feature_matrix_computed = True
+        
     def compute_cluster_centroids(self):
         self.cluster_centroids  = [(1/c.npatches)*sum([self.patches[k].matrix for k in c.patches_idx]) for c in self.leafs]
 
@@ -275,6 +317,17 @@ class ocdict():
             self.normalization_coefficients[j] = norm
         self.matrix_is_normalized = True
 
+    def normalize_feature_matrix(self):
+        self.normalized_feature_matrix = np.copy(self.matrix)
+        ncols = self.feature_matrix.shape[1]
+        self.fnormalization_coefficients = np.ones(shape=(self.feature_matrix.shape[1],))
+        for j in range(ncols):
+            col = self.normalized_feature_matrix[:,j]
+            norm = np.linalg.norm(col)
+            col /= norm
+            self.fnormalization_coefficients[j] = norm
+        self.feature_matrix_is_normalized = True
+        
     def monkey_cluster(self,levels=3):
         self.tree_depth = levels
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
@@ -309,19 +362,26 @@ class ocdict():
     def slink_kmeans_cluster(self):
         pass
 
-    def twomeans_cluster(self,minpatches=5,epsilon=1.e-2):
+    def twomeans_cluster(self,two_means_on_patches=False,haar_dict_on_patches=False,minpatches=5,epsilon=1.e-2):
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         #tovisit = queue.Queue()
         tovisit = []
         #tovisit.put(self.root_node)
         tovisit.append(self.root_node)
-        dictelements = [sum([p.matrix for p in self.patches])] #global average
+        #if haar_dict_on_patches:
+        #    dictelements = [sum([p.matrix for p in self.patches])] #global average
+        #else:
+        #    dictelements = [sum([p.feature_matrix for p in self.patches])] #global average
+        dictelements = [sum(self.patches[1:],self.patches[0])] #global average
         self.leafs = []
         cur_nodes = set()
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        patches_matrix = np.vstack([p.matrix.flatten() for p in self.patches]) 
+        if two_means_on_patches:
+            data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
+        else:
+            data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches]) 
         #while not tovisit.empty():
         while len(tovisit) > 0:
             #cur = tovisit.get()
@@ -329,29 +389,39 @@ class ocdict():
             lpatches_idx = []
             rpatches_idx = []
             if cur.npatches > minpatches:
-                km = KMeans(n_clusters=2).fit(patches_matrix[np.array(cur.patches_idx)])
+                km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)])
                 if km.inertia_ > epsilon: #TODO: check values
                     for k,label in enumerate(km.labels_):
                         if label == 0:
                             lpatches_idx.append(cur.patches_idx[k])
                         if label == 1:
                             rpatches_idx.append(cur.patches_idx[k])
-                    lnode = Node(lpatches_idx,cur)
-                    rnode = Node(rpatches_idx,cur)
+                    lnode = Node(lpatches_idx,cur,True)
+                    rnode = Node(rpatches_idx,cur,False)
                     cur.children = (lnode,rnode)
                     #tovisit.put(lnode)
                     #tovisit.put(rnode)
                     tovisit.append(lnode)
                     tovisit.append(rnode)
                     depth = max((depth,lnode.depth,rnode.depth))
-                    centroid1 = sum([self.patches[i].matrix for i in lpatches_idx])
-                    centroid2 = sum([self.patches[i].matrix for i in rpatches_idx])
+                    #if haar_dict_on_patches:
+                    #    centroid1 = sum([self.patches[i].matrix for i in lpatches_idx])
+                    #    centroid2 = sum([self.patches[i].matrix for i in rpatches_idx])
+                    #else:
+                    #    centroid1 = sum([self.patches[i].feature_matrix for i in lpatches_idx])
+                    #    centroid2 = sum([self.patches[i].feature_matrix for i in rpatches_idx])
+                    centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     curdict = centroid1/lnode.npatches - centroid2/rnode.npatches
-                    if np.linalg.norm(curdict) < 1.e-3:
+                    if haar_dict_on_patches:
+                        norm = np.linalg.norm(curdict.matrix)
+                    else:
+                        norm = np.linalg.norm(curdict.feature_matrix)
+                    if norm < 1.e-3:
                         ipdb.set_trace()
                     dictelements += [curdict]
-                    
-            if len(lpatches_idx) == 0 and len(rpatches_idx) == 0: #?better if cur.children is None
+            #if len(lpatches_idx) == 0 and len(rpatches_idx) == 0: #?better if cur.children is None
+            if cur.children is None:
                 self.leafs.append(cur)
         self.dictelements = dictelements
         self.tree_depth = depth
@@ -359,12 +429,15 @@ class ocdict():
         self.compute_cluster_centroids()
         return(self.dictelements)
 
-    def sparse_code(self,input_patch,sparsity):
+    def sparse_code(self,input_patch,sparsity,use_feature_matrices = False):
         if input_patch.matrix.shape != self.patches[0].matrix.shape:
             raise Exception("Input patch is not of the correct size")
-        if not self.matrix_computed:
+        if not self.matrix_computed and not use_feature_matrices:
             self._compute_matrix()
             self.normalize_matrix()
+        if not self.feature_matrix_computed and use_feature_matrices:
+            self._compute_feature_matrix()
+            self.normalize_feature_matrix()
         omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
@@ -373,42 +446,64 @@ class ocdict():
         y = input_patch.matrix.flatten()
         mean = np.mean(y)
         y -= mean
-        if self.matrix_is_normalized:
-            #omp.fit(self.normalized_matrix,y)
-            #coef = omp.coef_
-            yoct = y.astype('float64').transpose()
-            dictoct = self.normalized_matrix.astype('float64')
-            #gramdict = dictoct.transpose().dot(dictoct)
-            coef = octave.OMP(sparsity,yoct,dictoct).transpose()
-            #coef = octave.ompdChol(yoct,dictoct,gramdict,dictoct.transpose().dot(yoct),sparsity,1.e-3).transpose()
-            for idx,norm in np.ndenumerate(self.normalization_coefficients):
-                coef[idx] /= norm
+        if not use_feature_matrices:
+            matrix = self.matrix
+            normalize = self.matrix_is_normalized
+            if normalize:
+                norm_coefs = self.normalization_coefficients
         else:
-            omp.fit(self.matrix,y)
-            coef = omp.coef_
-            #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
-        #coef += mean
-        #print('Error in sparse coding: %f' % np.linalg.norm(input_patch.matrix - self.decode(coef)))
+            matrix = self.feature_matrix
+            normalize = self.feature_matrix_is_normalized
+            if normalized:
+                norm_coefs = self.fnormalization_coefficients
+        #if self.matrix_is_normalized:
+        #    #omp.fit(self.normalized_matrix,y)
+        #    #coef = omp.coef_
+        #    yoct = y.astype('float64').transpose()
+        #    dictoct = self.normalized_matrix.astype('float64')
+        #    #gramdict = dictoct.transpose().dot(dictoct)
+        #    coef = octave.OMP(sparsity,yoct,dictoct).transpose()
+        #    #coef = octave.ompdChol(yoct,dictoct,gramdict,dictoct.transpose().dot(yoct),sparsity,1.e-3).transpose()
+        #    for idx,norm in np.ndenumerate(self.normalization_coefficients):
+        #        coef[idx] /= norm
+        #else:
+        #    omp.fit(self.matrix,y)
+        #    coef = omp.coef_
+        #    #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
+        ##coef += mean
+        ##print('Error in sparse coding: %f' % np.linalg.norm(input_patch.matrix - self.decode(coef)))
+        omp.fit(matrix,y)
+        coef = omp.coef_
+        if normalize:
+            for idx,norm in np.ndenumerate(norm_coefs):
+                coef[idx] /= norm
         return(coef,mean)
 
-    def decode(self,coefs,mean):
-        out = np.zeros_like(self.patches[0].matrix)
-        for idx in coefs.nonzero()[0]:
-            #out += coefs[idx]*self.patches[idx]
-            out += coefs[idx]*self.matrix[:,idx].reshape(self.shape)
-            #out += coefs[idx]*self.normalized_matrix[:,idx].reshape(self.shape)
-        #if out.min() < 0:
-        #    out -= out.min()
-        #out /= out.max()
+    def decode(self,coefs,mean,use_feature_matrices=False):
+        if not use_feature_matrices:
+            out = np.zeros_like(self.patches[0].matrix)
+            shape = out.shape
+            for idx in coefs.nonzero()[0]:
+                out += coefs[idx]*self.matrix[:,idx].reshape(shape)
+        else:
+            out = np.zeros_like(self.patches[0].feature_matrix)
+            shape = out.shape
+            for idx in coefs.nonzero()[0]:
+                out += coefs[idx]*self.feature_matrix[:,idx].reshape(shape)
         return(out+mean)
     
 class Node():
-    def __init__(self,patches_idx,parent):
+    def __init__(self,patches_idx,parent,isleftchild=True):
         self.parent = parent
         if parent is None:
             self.depth = 0
+            self.idstr = ''
         else:
             self.depth = self.parent.depth + 1
+            if isleftchild:
+                self.idstr = parent.idstr + '0'
+            else:
+                self.idstr = parent.idstr + '1'
         self.children = None
         self.patches_idx = tuple(patches_idx) #indexes of d.patches_idx where d is an ocdict
         self.npatches= len(self.patches_idx)
