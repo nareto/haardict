@@ -307,7 +307,8 @@ class ocdict():
         return(distances)
     
     def normalize_matrix(self):
-        self.normalized_matrix = np.copy(self.matrix)
+        #self.normalized_matrix = np.copy(self.matrix)
+        self.normalized_matrix = self.matrix - self.matrix.mean(axis=0)
         ncols = self.matrix.shape[1]
         self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
         for j in range(ncols):
@@ -438,23 +439,30 @@ class ocdict():
         if not self.feature_matrix_computed and use_feature_matrices:
             self._compute_feature_matrix()
             self.normalize_feature_matrix()
+        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,tol=1.e-12)
         omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=False)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
-        #omp = OrthogonalMatchingPursuit(fit_intercept=True,normalize=True,tol=1)
+        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True)
         #y = np.hstack(np.vsplit(input_patch.matrix,self.height)).transpose()
         y = input_patch.matrix.flatten()
         mean = np.mean(y)
-        y -= mean
+        #y -= mean
+        #outnorm = np.linalg.norm(y)
         if not use_feature_matrices:
             matrix = self.matrix
             normalize = self.matrix_is_normalized
             if normalize:
+                #y /= outnorm
+                matrix = self.normalized_matrix
                 norm_coefs = self.normalization_coefficients
         else:
             matrix = self.feature_matrix
             normalize = self.feature_matrix_is_normalized
-            if normalized:
+            if normalize:
+                y /= outnorm
+                matrix = self.normalized_feature_matrix
                 norm_coefs = self.fnormalization_coefficients
         #if self.matrix_is_normalized:
         #    #omp.fit(self.normalized_matrix,y)
@@ -472,25 +480,44 @@ class ocdict():
         #    #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
         ##coef += mean
         ##print('Error in sparse coding: %f' % np.linalg.norm(input_patch.matrix - self.decode(coef)))
+        #ipdb.set_trace()
+        #omp.fit(matrix-matrix.mean(axis=0),y)
         omp.fit(matrix,y)
+        #omp.fit(self.normalized_matrix,y)
         coef = omp.coef_
-        if normalize:
-            for idx,norm in np.ndenumerate(norm_coefs):
-                coef[idx] /= norm
+        #print(len(coef.nonzero()[0]))
+        #yoct = y.astype('float64').transpose()
+        #dictoct = matrix.astype('float64')
+        #coef = octave.OMP(sparsity,yoct,dictoct).transpose()
+        #coef *= outnorm
+
+        #if normalize:
+        #    for idx,norm in np.ndenumerate(norm_coefs):
+        #        coef[idx] /= norm
         return(coef,mean)
 
     def decode(self,coefs,mean,use_feature_matrices=False):
         if not use_feature_matrices:
-            out = np.zeros_like(self.patches[0].matrix)
-            shape = out.shape
-            for idx in coefs.nonzero()[0]:
-                out += coefs[idx]*self.matrix[:,idx].reshape(shape)
+            #out = np.zeros_like(self.patches[0].matrix)
+            #shape = out.shape
+            if self.matrix_is_normalized:
+                matrix = self.normalized_matrix
+            else:
+                matrix = self.matrix
         else:
-            out = np.zeros_like(self.patches[0].feature_matrix)
-            shape = out.shape
-            for idx in coefs.nonzero()[0]:
-                out += coefs[idx]*self.feature_matrix[:,idx].reshape(shape)
-        return(out+mean)
+            #out = np.zeros_like(self.patches[0].feature_matrix)
+            #shape = out.shape
+            if self.matrix_is_normalized:
+                matrix = self.normalized_feature_matrix
+            else:
+                matrix = self.feature_matrix
+        #for idx in coefs.nonzero()[0]:
+        #    out += coefs[idx]*matrix[:,idx].reshape(shape)
+        #out = np.dot(matrix,coefs).reshape(shape)
+        out = (np.dot(matrix,coefs)).reshape(self.patches[0].matrix.shape)
+        #out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].matrix.shape)
+        #out += mean
+        return(out)
     
 class Node():
     def __init__(self,patches_idx,parent,isleftchild=True):

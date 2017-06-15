@@ -1,6 +1,7 @@
 from oct2py import octave
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.linear_model import Lasso
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.linear_model import OrthogonalMatchingPursuitCV
 #import queue
@@ -28,10 +29,10 @@ def plot_sparsities():
     plt.show()
     return(values)
 
-def simple_test(sparsity=50,plot=False,outprint=True):        
+def simple_test(sparsity=50,plot=False,outprint=True,ocdict=None,y=None):        
     np.random.seed(234234430)
-    n,m = 100,512
-    reshape = (10,10)
+    n,m = 64,512
+    reshape = (8,8)
     tolerance = 1e-10
     sigma=0.1
     avg = 0
@@ -39,19 +40,23 @@ def simple_test(sparsity=50,plot=False,outprint=True):
     normalize = False
 
     #ocdict = np.random.uniform(size=(n,m))
-    ocdict = np.random.normal(loc=avg,scale=sigma,size=(n,m))
-    y = np.random.uniform(size=(n,))
+    if ocdict is None:
+        ocdict = np.random.normal(loc=avg,scale=sigma,size=(n,m))
+    if y is None:
+        y = np.random.uniform(size=(n,))
     rank = np.linalg.matrix_rank(ocdict)
     #ocdict = np.arange(16).reshape(4,4)
     #y = np.array([1,0,0,0])
     mean = np.mean(y)
     #print(mean)
     y -= mean
+    ynorm = np.linalg.norm(y)
     if normalize:
-        y /= np.linalg.norm(y)
-        for col in range(m):
+        y /= ynorm
+        ocdict /= np.linalg.norm(ocdict)
+        #for col in range(m):
             #ocdict[:,col] /= np.linalg.norm(ocdict[:,col])
-            ocdict /= np.linalg.norm(ocdict)
+            #ocdict /= np.linalg.norm(ocdict)
 
     #print(y)
 
@@ -63,9 +68,11 @@ def simple_test(sparsity=50,plot=False,outprint=True):
     ##omp = OrthogonalMatchingPursuit(tol=tolerance)
     #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True)#,tol=tolerance)
     omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+    #omp = OrthogonalMatchingPursuitCV()
+    #omp = Lasso()
     omp.fit(ocdict,y)
     coef = omp.coef_
-
+    #coef *= ynorm
 
 
     #y = y.astype('float64')
@@ -78,6 +85,7 @@ def simple_test(sparsity=50,plot=False,outprint=True):
     #for idx in coef.nonzero()[0]:
     #    out += coef[idx]*ocdict[:,idx]
     out = np.dot(ocdict,coef)
+    #out *= ynorm
     #out += mean
     #score = omp.score(ocdict,y)
     #score= omp.score(coef,y)
@@ -104,4 +112,5 @@ def simple_test(sparsity=50,plot=False,outprint=True):
         ax1.imshow(y.reshape(reshape), cmap=plt.cm.gray,interpolation='none')
         ax2.imshow(out.reshape(reshape), cmap=plt.cm.gray,interpolation='none')
         fig.show()
-    return((rank,spars,err))
+    #return((rank,spars,err))
+    return(mean,y,out,coef)

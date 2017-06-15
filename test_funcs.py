@@ -1,3 +1,4 @@
+import ipdb
 import gc
 #from twoDdict import *
 import matplotlib.pyplot as plt
@@ -21,8 +22,9 @@ def test_learn_dict(l=2,r=2,twomeans_on_patches=True,haar_dict_on_patches=True):
     #paths = ['./360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/cloud.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/gold.jpg']
-    paths = ['seis0_orig.eps','seis2_orig.eps']
+    #paths = ['seis0_orig.eps','seis2_orig.eps']
     #paths = ['seis0_orig.eps']
+    paths = ['seis3.eps']
     return(twoDdict.learn_dict(paths,twomeans_on_patches,haar_dict_on_patches,l,r))
 
 
@@ -39,41 +41,55 @@ def fast_test_patch_reconstruction(sparsity=40):
     return(test_patch_reconstruction(ocdict,p1,sparsity=sparsity))
 
 
-def test_patch_reconstruction(ocdict,patch=None,sparsity = 40):
+def test_patch_reconstruction(ocdict,patch=None,sparsity = 40,plot=False):
     if patch is None:
         patch = twoDdict.Patch(np.random.uniform(size=ocdict.shape))
     coefs,mean = ocdict.sparse_code(patch,sparsity)
     outpatch = ocdict.decode(coefs,mean)
-    fig,(ax1,ax2) = plt.subplots(1,2)
-    ax1.imshow(patch.matrix, cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(outpatch, cmap=plt.cm.gray,interpolation='none')
-    ax1.set_title = 'original'
-    ax2.set_title = 'reconstructed'
-    fig.show()
-    return(coeffs)
+    print('Coeffs: %d\nError: %f\nFlattened Error: %f' %
+          (len(coefs.nonzero()[0]),np.linalg.norm(patch.matrix- outpatch),np.linalg.norm(patch.matrix.flatten()- outpatch.flatten())))
 
-def test_reconstruction_patches(ocdict,patches=None,sparsity = 10):
+    if plot:
+        fig,(ax1,ax2) = plt.subplots(1,2)
+        ax1.imshow(patch.matrix, cmap=plt.cm.gray,interpolation='none')
+        ax2.imshow(outpatch, cmap=plt.cm.gray,interpolation='none')
+        ax1.set_title = 'original'
+        ax2.set_title = 'reconstructed'
+        fig.show()
+    #return(coefs)
+
+def test_reconstruction_patches(ocdict,patches=None,sparsity = 10,plot=False):
+    np.random.seed(234234)
     height,width = ocdict.shape
     if patches is None:
-        patches = [Patch(np.random.uniform(size=ocdict.shape)),Patch(np.random.uniform(size=ocdict.shape))]
+        patches = [twoDdict.Patch(np.random.uniform(size=ocdict.shape)),twoDdict.Patch(np.random.uniform(size=ocdict.shape))]
     height *= len(patches)
-    img = np.vstack([x.array for x in patches])
+    img = np.vstack([x.matrix for x in patches])
     #patch = Patch(np.hstack([x.array for x in patches]))
     outpatches = []
+    coeficients = []
     for patch in patches:
         coefs,mean = ocdict.sparse_code(patch,sparsity)
         outpatch = ocdict.decode(coefs,mean)
         outpatches.append(outpatch)
-    result = assemble_patches(outpatches,(height,width))
+        coeficients.append(coefs)
+    result = twoDdict.assemble_patches(outpatches,(height,width))
     #fig,(ax1,ax2) = plt.subplots(1,2)
-    fig,(ax1,ax2,ax3) = plt.subplots(1,3)
-    ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
-    ax2.imshow(result, cmap=plt.cm.gray,interpolation='none')
-    #ax2.imshow(outpatches[0], cmap=plt.cm.gray,interpolation='none')
-    ax3.imshow(outpatches[1], cmap=plt.cm.gray,interpolation='none')
-    ax1.set_title = 'original'
-    ax2.set_title = 'reconstructed'
-    fig.show()
+    #print('Coeffs1: %d\nCoeffs2: %d\nError1: %f\nError2: %f\nGlobal Error: %f' %
+    #      (len(coeficients[0].nonzero()[0]),len(coeficients[1].nonzero()[0]),np.linalg.norm(patches[0].matrix - outpatches[0]), np.linalg.norm(patches[1].matrix - outpatches[1]), np.linalg.norm(img-result)))
+    print('Coeffs1: %d\nError1: %f' %
+          (len(coeficients[0].nonzero()[0]),np.linalg.norm(img-result)))
+    if plot:
+        #fig,(ax1,ax2,ax3) = plt.subplots(1,3)
+        fig,(ax1,ax2) = plt.subplots(1,2)
+        ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
+        ax2.imshow(result, cmap=plt.cm.gray,interpolation='none')
+        #ax2.imshow(outpatches[0], cmap=plt.cm.gray,interpolation='none')
+        #ax3.imshow(outpatches[1], cmap=plt.cm.gray,interpolation='none')
+        ax1.set_title = 'original'
+        ax2.set_title = 'reconstructed'
+        fig.show()
+    return(coeficients,result)
 
 def fast_test_reconstruction(sparsity=20,clip=True,plot=False):
     ocdict = twoDdict.ocdict()
@@ -103,9 +119,11 @@ def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True):
         img = np.load(imgpath)
     patches = twoDdict.extract_patches(img,size=psize)
     outpatches = []
+    coefsnonzeros = []
     for p in patches:
         coefs,mean = ocdict.sparse_code(twoDdict.Patch(p),spars)
         outpatches.append(ocdict.decode(coefs,mean))
+        coefsnonzeros.append(len(coefs.nonzero()[0]))
     out = twoDdict.assemble_patches(outpatches,img.shape)
     if clip:
         out = twoDdict.clip(out)
@@ -121,7 +139,8 @@ def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True):
         ax2.imshow(out, cmap=plt.cm.gray,interpolation='none')
         #ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
         fig.show()
-    return(img,out)
+    #return(img,out,coefsnonzeros)
+    return(patches,outpatches)
     
 def test_denoise(sigma=12):
     sigma_noise = sigma
