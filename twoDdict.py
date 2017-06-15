@@ -448,7 +448,7 @@ class ocdict():
         #y = np.hstack(np.vsplit(input_patch.matrix,self.height)).transpose()
         y = input_patch.matrix.flatten()
         mean = np.mean(y)
-        #y -= mean
+        y -= mean
         #outnorm = np.linalg.norm(y)
         if not use_feature_matrices:
             matrix = self.matrix
@@ -461,7 +461,7 @@ class ocdict():
             matrix = self.feature_matrix
             normalize = self.feature_matrix_is_normalized
             if normalize:
-                y /= outnorm
+                #y /= outnorm
                 matrix = self.normalized_feature_matrix
                 norm_coefs = self.fnormalization_coefficients
         #if self.matrix_is_normalized:
@@ -516,7 +516,7 @@ class ocdict():
         #out = np.dot(matrix,coefs).reshape(shape)
         out = (np.dot(matrix,coefs)).reshape(self.patches[0].matrix.shape)
         #out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].matrix.shape)
-        #out += mean
+        out += mean
         return(out)
     
 class Node():
