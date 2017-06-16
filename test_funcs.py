@@ -22,9 +22,11 @@ def test_learn_dict(l=2,r=2,twomeans_on_patches=True,haar_dict_on_patches=True):
     #paths = ['./360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/cloud.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/gold.jpg']
-    #paths = ['seis0_orig.eps','seis2_orig.eps']
+    paths = ['seis0_orig.eps','seis2_orig.eps']
+    #paths = ['seis0_orig.eps','seis3.npy']
+    #paths = ['seis2_orig.eps','seis3.npy']
     #paths = ['seis0_orig.eps']
-    paths = ['seis3.eps']
+    #paths = ['seis3.eps']
     return(twoDdict.learn_dict(paths,twomeans_on_patches,haar_dict_on_patches,l,r))
 
 
@@ -109,7 +111,7 @@ def fast_test_reconstruction(sparsity=20,clip=True,plot=False):
     #imgpath =  './code/epwt/img/peppers256.png'
     return(test_reconstruction(ocdict,imgpath,sparsity,clip,plot))
     
-def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True):
+def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True,use_feature_matrices=False,twodpca=None):
     psize = (ocdict.height,ocdict.width)
     spars= sparsity
 
@@ -121,9 +123,13 @@ def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True):
     outpatches = []
     coefsnonzeros = []
     for p in patches:
-        coefs,mean = ocdict.sparse_code(twoDdict.Patch(p),spars)
-        outpatches.append(ocdict.decode(coefs,mean))
+        patch = twoDdict.Patch(p)
+        if use_feature_matrices:
+            patch.compute_feature_matrix(twodpca.U,twodpca.V)
+        coefs,mean = ocdict.sparse_code(patch,spars,use_feature_matrices)
+        outpatches.append(ocdict.decode(coefs,mean,use_feature_matrices))
         coefsnonzeros.append(len(coefs.nonzero()[0]))
+            
     out = twoDdict.assemble_patches(outpatches,img.shape)
     if clip:
         out = twoDdict.clip(out)

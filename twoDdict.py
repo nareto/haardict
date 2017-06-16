@@ -146,7 +146,6 @@ def learn_dict(paths,twomeans_on_patches=True,haar_dict_on_patches=True,l=2,r=2)
     patches = []
     for i in images:
         patches += [Patch(p) for p in extract_patches(i)]
-
     twodpca_instance = twodpca(patches,l,r)
     twodpca_instance.compute_simple_bilateral_2dpca()
 
@@ -197,6 +196,31 @@ class Patch():
         plt.imshow(self.matrix, cmap=plt.cm.gray,interpolation='none')
         fig.show()
 
+class pca():
+    def __init__(self,patches=None,k=-1):
+        self.k = k
+        if patches is not None:
+            self.patches = tuple(patches)
+
+    def save_pickle(self,filepath):
+        f = open(filepath,'wb')
+        pickle.dump(self.__dict__,f,3)
+        f.close()
+
+    def load_pickle(self,filepath):
+        f = open(filepath,'rb')
+        tmpdict = pickle.load(f)
+        f.close()
+        self.__dict__.update(tmpdict)
+
+    def compute_pca(self):
+        length = self.patches[0].matrix.flatten().shape[0]
+        cov = covariance_matrix([x.matrix.flatten().reshape(length,1).transpose() for x in self.patches])
+        self.eigenvalues,self.eigenvectors = sslinalg.eigsh(cov,self.k)
+        #self.eigenvalues,self.eigenvectors = np.linalg.eig(cov)
+
+        
+            
 class twodpca():
     def __init__(self,patches=None,l=-1,r=-1):
         self.l = l
@@ -319,7 +343,8 @@ class ocdict():
         self.matrix_is_normalized = True
 
     def normalize_feature_matrix(self):
-        self.normalized_feature_matrix = np.copy(self.matrix)
+        #self.normalized_feature_matrix = np.copy(self.feature_matrix)
+        self.normalized_feature_matrix = self.feature_matrix - self.feature_matrix.mean(axis=0) 
         ncols = self.feature_matrix.shape[1]
         self.fnormalization_coefficients = np.ones(shape=(self.feature_matrix.shape[1],))
         for j in range(ncols):
@@ -446,7 +471,10 @@ class ocdict():
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
         #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True)
         #y = np.hstack(np.vsplit(input_patch.matrix,self.height)).transpose()
-        y = input_patch.matrix.flatten()
+        if use_feature_matrices:
+            y = input_patch.feature_matrix.flatten()
+        else:
+            y = input_patch.matrix.flatten()
         mean = np.mean(y)
         y -= mean
         #outnorm = np.linalg.norm(y)
@@ -514,9 +542,10 @@ class ocdict():
         #for idx in coefs.nonzero()[0]:
         #    out += coefs[idx]*matrix[:,idx].reshape(shape)
         #out = np.dot(matrix,coefs).reshape(shape)
-        out = (np.dot(matrix,coefs)).reshape(self.patches[0].matrix.shape)
-        #out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].matrix.shape)
-        out += mean
+        #out = (np.dot(matrix,coefs)).reshape(self.patches[0].matrix.shape)
+        out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].matrix.shape)
+        #out += mean
+        out += np.real(mean)
         return(out)
     
 class Node():
