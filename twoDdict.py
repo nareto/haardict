@@ -158,20 +158,49 @@ def learn_dict(paths,twomeans_on_patches=True,haar_dict_on_patches=True,l=2,r=2)
 
     return(twodpca_instance,ocd)
 
+def learn_dict_pca(paths,k=2):
+    images = []
+    for f in paths:
+        if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+            images.append(skimage.io.imread(f,as_grey=True))
+        elif f[-3:].upper() in  ['NPY']:
+            images.append(np.load(f))
+    print('Learning from images: %s' % paths)
+
+    patches = []
+    for i in images:
+        patches += [Patch(p) for p in extract_patches(i)]
+    pca_instance = pca(patches,k)
+    pca_instance.compute_pca()
+    for p in patches:
+        p.compute_feature_vector(pca_instance.eigenvectors)
+    ocd = ocdict(patches)
+    ocd.twomeans_cluster(twomeans_on_patches,haar_dict_on_patches)
+
+    return(twodpca_instance,ocd)
+
+
 
 class Patch():
     def __init__(self,matrix):
         self.matrix = matrix.astype('float64')
         self.feature_matrix = None
+        self.feature_vector = None
 
     def compute_feature_matrix(self,U,V):
         self.feature_matrix = np.dot(np.dot(V.transpose(),self.matrix),U)
+
+    def compute_feature_vector(self,eigenvectors):
+        length = self.matrix.flatten().shape[0]
+        self.feature_vector = np.dot(self.matrix.flatten().reshape(1,length),eigenvectors)
         
     def __add__(self,patch):
         newmat = self.matrix + patch.matrix
         p = Patch(newmat)
         if self.feature_matrix is not None and patch.feature_matrix is not None:
             p.feature_matrix = self.feature_matrix + patch.feature_matrix
+        if self.feature_vector is not None and patch.feature_vector is not None:
+            p.feature_vectro = self.feature_vector + patch.feature_vector
         return(p)
 
     def __mul__(self,scalar):
@@ -179,6 +208,8 @@ class Patch():
         p = Patch(newmat)
         if self.feature_matrix is not None:
             p.feature_matrix = scalar*self.feature_matrix
+        if self.feature_vector is not None:
+            p.feature_vector = scalar*self.feature_vector
         return(p)
         
     def __rmul__(self,scalar):
@@ -388,7 +419,7 @@ class ocdict():
     def slink_kmeans_cluster(self):
         pass
 
-    def twomeans_cluster(self,two_means_on_patches=False,haar_dict_on_patches=False,minpatches=5,epsilon=1.e-2):
+    def twomeans_cluster(self,two_means_on_patches=False,haar_dict_on_patches=False,minpatches=5,epsilon=1.e-2,pca=False):
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         #tovisit = queue.Queue()
         tovisit = []
@@ -404,7 +435,9 @@ class ocdict():
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        if two_means_on_patches:
+        if pca:
+            data_matrix = np.vstack([p.feature_vector for p in self.patches]) 
+        elif two_means_on_patches:
             data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
             data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches]) 
