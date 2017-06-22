@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse.linalg as sslinalg
 import skimage.io
+import scipy.sparse
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
 from oct2py import octave
@@ -178,6 +179,27 @@ def learn_dict_pca(paths,k=2):
     ocd.twomeans_cluster(twomeans_on_patches,haar_dict_on_patches)
 
     return(twodpca_instance,ocd)
+
+def learn_dict_ksvd(paths,ndictelements=10,sparsity=2):
+    images = []
+    for f in paths:
+        if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+            images.append(skimage.io.imread(f,as_grey=True))
+        elif f[-3:].upper() in  ['NPY']:
+            images.append(np.load(f))
+    print('Learning from images: %s' % paths)
+
+    patches = []
+    for i in images:
+        patches += [Patch(p) for p in extract_patches(i)]
+    #pca_instance = pca(patches,k)
+    #pca_instance.compute_pca()
+    #for p in patches:
+    #    p.compute_feature_vector(pca_instance.eigenvectors)
+    ocd = ocdict(patches)
+    ocd.ksvd_dict(ndictelements,sparsity)
+
+    return(ocd)
 
 
 
@@ -488,6 +510,51 @@ class ocdict():
         self.compute_cluster_centroids()
         return(self.dictelements)
 
+    def ksvd_dict(self,K,sparsity,maxiter=5):
+        length = self.patches[0].matrix.flatten().shape[0]
+        Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
+        n,N = Y.shape
+        D = np.random.uniform(size=(n,K))
+        #center Y
+        for j in range(N):
+            col = Y[:,j]
+            mean = np.mean(col)
+            col -= mean
+        #for j in range(K):
+        #    col = D[:,j]
+        #    col /= np.linalg.norm(col)
+        for it in range(maxiter):
+            #sparse coding stage
+            omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+            omp.fit(D,Y)
+            X = omp.coef_.transpose()
+
+            #dictionary update
+            for k in range(K):
+                xkT = X[k,:]
+                wk = xkT.nonzero()[0]
+                cwk = len(wk)
+                if cwk == 0:
+                    continue #TODO: is it correct?
+                Wk = scipy.sparse.csc_matrix((np.ones(cwk),(wk,np.arange(cwk))),shape=(N,cwk))
+                xkR = Wk.transpose().dot(xkT)
+                EkR = Wk.transpose().dot(Y.transpose()).transpose()
+                for j in range(K):
+                    if j == k:
+                        continue
+                    #rank1approx = np.dot(D[:,j],X[j,:])
+                    #EkR -= Wk.transpose().dot(rank1approx.transpose()).transpose()
+                    EkR -= np.dot(D[:,j].reshape(D.shape[0],1), xkR.reshape(1,cwk))
+                U,Delta,V = np.linalg.svd(EkR)
+                D[:,k] = U[:,0]
+                xkR = Delta[0]*V[0,:]
+                for idx,col in np.ndenumerate(wk):
+                    X[k,col] = xkR[idx]
+
+        self.matrix = D
+        self.matrix_computed = True
+
+    
     def sparse_code(self,input_patch,sparsity,use_feature_matrices = False):
         if input_patch.matrix.shape != self.patches[0].matrix.shape:
             raise Exception("Input patch is not of the correct size")

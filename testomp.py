@@ -100,8 +100,8 @@ def simple_test(sparsity=50,plot=False,outprint=True,ocdict=None,y=None):
 
     #print('Number of coefficients used: %d\nError in sparse coding: %f\nOut2: %f' %\
   #        (len(coef.nonzero()[0]),np.linalg.norm(out - y), np.linalg.norm(out2-y)))
-    out += mean
-    y += mean
+    #out += mean
+    #y += mean
     err = np.linalg.norm(out - y)
     spars = len(coef.nonzero()[0])
     if outprint:
@@ -113,4 +113,47 @@ def simple_test(sparsity=50,plot=False,outprint=True,ocdict=None,y=None):
         ax2.imshow(out.reshape(reshape), cmap=plt.cm.gray,interpolation='none')
         fig.show()
     #return((rank,spars,err))
-    return(mean,y,out,coef)
+    #return(mean,y,out,coef)
+
+def multidim_test():
+    #find X for Y = DX using OMP. Y is n x N, D is n x K, X is K x N
+    #n,N,K,sparsity = (3,10,5,2)
+    n,N,K,sparsity = (50,20,90,20)
+    #D = np.random.uniform(size=(n,K))
+    D = np.random.normal(loc=0,scale=0.1,size=(n,K))
+    Y = np.random.uniform(size=(n,N))
+
+    #center Y
+    for j in range(N):
+        col = Y[:,j]
+        mean = np.mean(col)
+        col -= mean
+    #normalize D
+    #for j in range(K):
+    #    col = D[:,j]
+    #    norm = np.linalg.norm(col)
+    #    col /= norm
+    #D /= np.linalg.norm(D)
+        
+    omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+    omp.fit(D,Y)
+    X1 = omp.coef_.transpose()
+    err = np.linalg.norm(Y-np.dot(D,X1.reshape(K,N)),ord=2)
+    print('Global error = %f' % err)
+    #for j in range(N):
+    #    err = np.linalg.norm(Y[:,j]-np.dot(D,X1.reshape(K,N))[:,j])
+    #    print('Error for column %d = %f' % (j,err))
+    #compare with applying omp to every single column independently
+    X2 = np.zeros((K,N))
+    for j in range(N):
+        y = Y[:,j]
+        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+        omp.fit(D,y)
+        X2 [:,j] = omp.coef_
+    err = np.linalg.norm(Y-np.dot(D,X2),ord=2)
+    print('Global error = %f' % err)
+    #for j in range(N):
+    #    err = np.linalg.norm(Y[:,j]-np.dot(D,X2.reshape(K,N))[:,j])
+    #    print('Error for column %d = %f' % (j,err))
+    return(Y,D,X1,X2)
+    
