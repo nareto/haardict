@@ -7,7 +7,7 @@ import twoDdict
 import os
 import skimage.io
 
-def test_learn_dict(l=2,r=2,twomeans_on_patches=True,haar_dict_on_patches=True):
+def test_learn_dict(l=3,r=3,twomeans_on_patches=False,haar_dict_on_patches=True):
     images_paths = []
     #for i in range(1):
     #    images.append(np.random.uniform(size=(200,300)))
@@ -22,11 +22,12 @@ def test_learn_dict(l=2,r=2,twomeans_on_patches=True,haar_dict_on_patches=True):
     #paths = ['./360_Colour_Items_Moreno-Martinez_Montoro/Nature/cliff.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/cloud.jpg',
     #         './360_Colour_Items_Moreno-Martinez_Montoro/Nature/gold.jpg']
-    paths = ['seis0_orig.eps','seis2_orig.eps']
+    #paths = ['seis0_orig.eps','seis2_orig.eps']
     #paths = ['seis0_orig.eps','seis3.npy']
     #paths = ['seis2_orig.eps','seis3.npy']
     #paths = ['seis0_orig.eps']
     #paths = ['seis3.eps']
+    paths = ['../../img/dock-rescaled.jpg','../../img/landscape1-rescaled.jpg']
     return(twoDdict.learn_dict(paths,twomeans_on_patches,haar_dict_on_patches,l,r))
 
 
@@ -111,7 +112,7 @@ def fast_test_reconstruction(sparsity=20,clip=True,plot=False):
     #imgpath =  './code/epwt/img/peppers256.png'
     return(test_reconstruction(ocdict,imgpath,sparsity,clip,plot))
     
-def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True,use_feature_matrices=False,twodpca=None):
+def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=False,use_feature_matrices=False,twodpca=None):
     psize = (ocdict.height,ocdict.width)
     spars= sparsity
 
@@ -146,7 +147,8 @@ def test_reconstruction(ocdict,imgpath,sparsity=20,clip=False,plot=True,use_feat
         #ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
         fig.show()
     #return(img,out,coefsnonzeros)
-    return(patches,outpatches)
+    #return(patches,outpatches)
+    return(out)
     
 def test_denoise(sigma=12):
     sigma_noise = sigma

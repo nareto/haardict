@@ -37,7 +37,8 @@ def psnr(img1,img2):
         return(-1)
     mse /= img1.size
     mse = np.sqrt(mse)
-    return(20*np.log10(255/mse))
+    maxval = img1.max()
+    return(20*np.log10(maxval/mse))
 
 def HaarPSI(img1,img2):
     """Computes HaarPSI of img1 vs. img2. Requires file HaarPSI.m to be present in working directory"""
@@ -135,7 +136,7 @@ def covariance_matrix(patches):
     ret /= len(patches)
     return(ret)
 
-def learn_dict(paths,twomeans_on_patches=True,haar_dict_on_patches=True,l=2,r=2):
+def learn_dict(paths,twomeans_on_patches=False,haar_dict_on_patches=True,l=3,r=3,cluster_epsilon=1.e-2):
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -155,7 +156,7 @@ def learn_dict(paths,twomeans_on_patches=True,haar_dict_on_patches=True,l=2,r=2)
             p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    ocd.twomeans_cluster(twomeans_on_patches,haar_dict_on_patches)
+    ocd.twomeans_cluster(twomeans_on_patches,haar_dict_on_patches,epsilon=cluster_epsilon)
 
     return(twodpca_instance,ocd)
 
@@ -180,7 +181,7 @@ def learn_dict_pca(paths,k=2):
 
     return(twodpca_instance,ocd)
 
-def learn_dict_ksvd(paths,ndictelements=10,sparsity=2):
+def learn_dict_ksvd(paths,ndictelements,T0):
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -197,7 +198,7 @@ def learn_dict_ksvd(paths,ndictelements=10,sparsity=2):
     #for p in patches:
     #    p.compute_feature_vector(pca_instance.eigenvectors)
     ocd = ocdict(patches)
-    ocd.ksvd_dict(ndictelements,sparsity)
+    ocd.ksvd_dict(ndictelements,T0)
 
     return(ocd)
 
@@ -349,8 +350,6 @@ class ocdict():
         self.__dict__.update(tmpdict)
 
     def _compute_matrix(self):
-        if not self.clustered:
-            raise Exception("You need to cluster the patches first")
         #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
         self.matrix = np.vstack([x.matrix.flatten() for x in self.dictelements]).transpose()
         self.matrix_computed = True
@@ -359,8 +358,6 @@ class ocdict():
         #self.normalize_matrix()
 
     def _compute_feature_matrix(self):
-        if not self.clustered:
-            raise Exception("You need to cluster the patches first")
         #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
         self.feature_matrix = np.vstack([x.feature_matrix.flatten() for x in self.dictelements]).transpose()
         self.feature_matrix_computed = True
@@ -383,16 +380,17 @@ class ocdict():
             distances[i] = np.linalg.norm(centroid1 - c)
         return(distances)
     
-    def normalize_matrix(self):
+    def normalize_matrix(self,ord=None):
         #self.normalized_matrix = np.copy(self.matrix)
         self.normalized_matrix = self.matrix - self.matrix.mean(axis=0)
         ncols = self.matrix.shape[1]
         self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
         for j in range(ncols):
             col = self.normalized_matrix[:,j]
-            norm = np.linalg.norm(col)
-            col /= norm
-            self.normalization_coefficients[j] = norm
+            norm = np.linalg.norm(col,ord=ord)
+            if norm != 0:
+                col /= norm
+                self.normalization_coefficients[j] = norm
         self.matrix_is_normalized = True
 
     def normalize_feature_matrix(self):
@@ -510,50 +508,68 @@ class ocdict():
         self.compute_cluster_centroids()
         return(self.dictelements)
 
-    def ksvd_dict(self,K,sparsity,maxiter=5):
+    def ksvd_dict(self,K,L,maxiter=5):
+        param = {'InitializationMethod': 'DataElements',
+                 'K': K,
+                 'L': L,
+                 'displayProgress': 1,
+                 'errorFlag': 0,
+                 'numIteration': 10,
+                 'preserveDCAtom': 1}
         length = self.patches[0].matrix.flatten().shape[0]
         Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
-        n,N = Y.shape
-        D = np.random.uniform(size=(n,K))
-        #center Y
-        for j in range(N):
-            col = Y[:,j]
-            mean = np.mean(col)
-            col -= mean
-        #for j in range(K):
-        #    col = D[:,j]
-        #    col /= np.linalg.norm(col)
-        for it in range(maxiter):
-            #sparse coding stage
-            omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
-            omp.fit(D,Y)
-            X = omp.coef_.transpose()
-
-            #dictionary update
-            for k in range(K):
-                xkT = X[k,:]
-                wk = xkT.nonzero()[0]
-                cwk = len(wk)
-                if cwk == 0:
-                    continue #TODO: is it correct?
-                Wk = scipy.sparse.csc_matrix((np.ones(cwk),(wk,np.arange(cwk))),shape=(N,cwk))
-                xkR = Wk.transpose().dot(xkT)
-                EkR = Wk.transpose().dot(Y.transpose()).transpose()
-                for j in range(K):
-                    if j == k:
-                        continue
-                    #rank1approx = np.dot(D[:,j],X[j,:])
-                    #EkR -= Wk.transpose().dot(rank1approx.transpose()).transpose()
-                    EkR -= np.dot(D[:,j].reshape(D.shape[0],1), xkR.reshape(1,cwk))
-                U,Delta,V = np.linalg.svd(EkR)
-                D[:,k] = U[:,0]
-                xkR = Delta[0]*V[0,:]
-                for idx,col in np.ndenumerate(wk):
-                    X[k,col] = xkR[idx]
-
+        octave.addpath('../ksvd')
+        D = octave.KSVD(Y,param)
+    #    length = self.patches[0].matrix.flatten().shape[0]
+    #    Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
+    #    n,N = Y.shape
+    #    #D = np.random.uniform(size=(n,K))
+    #    D = np.zeros((n,K))
+    #    for k in range(K):
+    #        randidx = np.random.randint(0,len(self.patches))
+    #        D[:,k] = self.patches[randidx].matrix.flatten()#.reshape(length,1)
+    #    #center Y
+    #    for j in range(N):
+    #        col = Y[:,j]
+    #        mean = np.mean(col)
+    #        col -= mean
+    #    #for j in range(K):
+    #    #    col = D[:,j]
+    #    #    col /= np.linalg.norm(col)
+    #    for it in range(maxiter):
+    #        #sparse coding stage
+    #        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
+    #        omp.fit(D,Y)
+    #        X = omp.coef_.transpose()
+    #
+    #        #dictionary update
+    #        for k in range(K):
+    #            xkT = X[k,:]
+    #            wk = xkT.nonzero()[0]
+    #            cwk = len(wk)
+    #            if cwk == 0:
+    #                continue #TODO: is it correct?
+    #            Wk = scipy.sparse.csc_matrix((np.ones(cwk),(wk,np.arange(cwk))),shape=(N,cwk))
+    #            xkR = Wk.transpose().dot(xkT)
+    #            EkR = Wk.transpose().dot(Y.transpose()).transpose()
+    #            for j in range(K):
+    #                if j == k:
+    #                    continue
+    #                #rank1approx = np.dot(D[:,j],X[j,:])
+    #                #EkR -= Wk.transpose().dot(rank1approx.transpose()).transpose()
+    #                EkR -= np.dot(D[:,j].reshape(D.shape[0],1), xkR.reshape(1,cwk))
+    #            U,Delta,V = np.linalg.svd(EkR)
+    #            D[:,k] = U[:,0]
+    #            xkR = Delta[0]*V[0,:]
+    #            for idx,col in np.ndenumerate(wk):
+    #                X[k,col] = xkR[idx]
+    #
         self.matrix = D
         self.matrix_computed = True
-
+        self.dictelements = []
+        rows,cols = self.patches[0].matrix.shape
+        for j in range(K):
+            self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
     
     def sparse_code(self,input_patch,sparsity,use_feature_matrices = False):
         if input_patch.matrix.shape != self.patches[0].matrix.shape:
@@ -647,6 +663,19 @@ class ocdict():
         #out += mean
         out += np.real(mean)
         return(out)
+
+    def imshow(self,rows=10,cols=10):
+        self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=True)[:rows*cols]
+        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+        for idx, a in np.ndenumerate(axis):
+            #a.set_xticks = ''
+            #a.set_yticks = ''
+            a.set_axis_off()
+            a.imshow(self.delm_by_var[rows*idx[0] + idx[1]].matrix,interpolation='nearest')
+            #print(delm_by_var[rows*idx[0] + idx[1]].matrix.var())
+        #fig.tight_layout()
+        fig.show()
+        
     
 class Node():
     def __init__(self,patches_idx,parent,isleftchild=True):
