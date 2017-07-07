@@ -321,7 +321,10 @@ class twodpca():
         
 
 class ocdict():
-    def __init__(self, patches=None):
+    def __init__(self, patches=None, filepath=None):
+        if filepath is not None:
+            self.load_pickle(filepath)
+            return(None)
         if patches is not None:
             self.patches = tuple(patches) #original image patches
             self.npatches = len(patches)
