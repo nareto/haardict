@@ -7,7 +7,6 @@ imgpath = sys.argv[2]
 
 sparsity = 20
 clip = False
-use_feature_matrices = False
 twodpca = None
 plot = True
 
@@ -25,8 +24,8 @@ for p in patches:
     patch = twoDdict.Patch(p)
     if use_feature_matrices:
         patch.compute_feature_matrix(twodpca.U,twodpca.V)
-    coefs,mean = ocdict.sparse_code(patch,spars,use_feature_matrices)
-    outpatches.append(ocdict.decode(coefs,mean,use_feature_matrices))
+    coefs,mean = ocdict.sparse_code(patch,spars)
+    outpatches.append(ocdict.decode(coefs,mean))
     coefsnonzeros.append(len(coefs.nonzero()[0]))
 
 out = twoDdict.assemble_patches(outpatches,img.shape)

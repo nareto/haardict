@@ -330,12 +330,8 @@ class ocdict():
             self.npatches = len(patches)
             self.shape = self.patches[0].matrix.shape
             self.height,self.width = self.shape
-        #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.patches])
-        #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
         self.matrix_is_normalized = False
         self.feature_matrix_is_normalized = False
-        #self.normalize_matrix()
-        #self.sparse_coefs = None
         self.root_node = None
         self.clustered = False
         self.matrix_computed = False
@@ -353,15 +349,12 @@ class ocdict():
         self.__dict__.update(tmpdict)
 
     def _compute_matrix(self):
-        #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
         self.matrix = np.vstack([x.matrix.flatten() for x in self.dictelements]).transpose()
         self.matrix_computed = True
-        #self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
-        #self.matrix_is_normalized = False
-        #self.normalize_matrix()
+        self._normalize_matrix()
+
 
     def _compute_feature_matrix(self):
-        #self.matrix = np.hstack([np.hstack(np.vsplit(x,self.height)).transpose() for x in self.dictelements])
         self.feature_matrix = np.vstack([x.feature_matrix.flatten() for x in self.dictelements]).transpose()
         self.feature_matrix_computed = True
         
@@ -383,8 +376,7 @@ class ocdict():
             distances[i] = np.linalg.norm(centroid1 - c)
         return(distances)
     
-    def normalize_matrix(self,ord=None):
-        #self.normalized_matrix = np.copy(self.matrix)
+    def _normalize_matrix(self,ord=None):
         self.normalized_matrix = self.matrix - self.matrix.mean(axis=0)
         ncols = self.matrix.shape[1]
         self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
@@ -574,96 +566,30 @@ class ocdict():
         for j in range(K):
             self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
     
-    def sparse_code(self,input_patch,sparsity,use_feature_matrices = False):
+    def sparse_code(self,input_patch,sparsity):
         if input_patch.matrix.shape != self.patches[0].matrix.shape:
             raise Exception("Input patch is not of the correct size")
-        if not self.matrix_computed and not use_feature_matrices:
+        if not self.matrix_computed:
             self._compute_matrix()
-            self.normalize_matrix()
-        if not self.feature_matrix_computed and use_feature_matrices:
-            self._compute_feature_matrix()
-            self.normalize_feature_matrix()
-        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,tol=1.e-12)
         omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
-        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=False)
-        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,normalize=True)
-        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True,tol=1)
-        #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True,normalize=True)
-        #y = np.hstack(np.vsplit(input_patch.matrix,self.height)).transpose()
-        if use_feature_matrices:
-            y = input_patch.feature_matrix.flatten()
-        else:
-            y = input_patch.matrix.flatten()
+        y = input_patch.matrix.flatten()
         mean = np.mean(y)
         y -= mean
         #outnorm = np.linalg.norm(y)
-        if not use_feature_matrices:
-            matrix = self.matrix
-            normalize = self.matrix_is_normalized
-            if normalize:
-                #y /= outnorm
-                matrix = self.normalized_matrix
-                norm_coefs = self.normalization_coefficients
-        else:
-            matrix = self.feature_matrix
-            normalize = self.feature_matrix_is_normalized
-            if normalize:
-                #y /= outnorm
-                matrix = self.normalized_feature_matrix
-                norm_coefs = self.fnormalization_coefficients
-        #if self.matrix_is_normalized:
-        #    #omp.fit(self.normalized_matrix,y)
-        #    #coef = omp.coef_
-        #    yoct = y.astype('float64').transpose()
-        #    dictoct = self.normalized_matrix.astype('float64')
-        #    #gramdict = dictoct.transpose().dot(dictoct)
-        #    coef = octave.OMP(sparsity,yoct,dictoct).transpose()
-        #    #coef = octave.ompdChol(yoct,dictoct,gramdict,dictoct.transpose().dot(yoct),sparsity,1.e-3).transpose()
-        #    for idx,norm in np.ndenumerate(self.normalization_coefficients):
-        #        coef[idx] /= norm
-        #else:
-        #    omp.fit(self.matrix,y)
-        #    coef = omp.coef_
-        #    #coef = octave.OMP(sparsity,y.astype('float64').transpose(),self.matrix.astype('float64')).transpose()
-        ##coef += mean
-        ##print('Error in sparse coding: %f' % np.linalg.norm(input_patch.matrix - self.decode(coef)))
-        #ipdb.set_trace()
-        #omp.fit(matrix-matrix.mean(axis=0),y)
+        matrix = self.matrix
+        normalize = self.matrix_is_normalized
+        if normalize:
+            #y /= outnorm
+            matrix = self.normalized_matrix
+            norm_coefs = self.normalization_coefficients
         omp.fit(matrix,y)
-        #omp.fit(self.normalized_matrix,y)
         coef = omp.coef_
-        #print(len(coef.nonzero()[0]))
-        #yoct = y.astype('float64').transpose()
-        #dictoct = matrix.astype('float64')
-        #coef = octave.OMP(sparsity,yoct,dictoct).transpose()
-        #coef *= outnorm
-
-        #if normalize:
-        #    for idx,norm in np.ndenumerate(norm_coefs):
-        #        coef[idx] /= norm
         return(coef,mean)
 
-    def decode(self,coefs,mean,use_feature_matrices=False):
-        if not use_feature_matrices:
-            #out = np.zeros_like(self.patches[0].matrix)
-            #shape = out.shape
-            if self.matrix_is_normalized:
-                matrix = self.normalized_matrix
-            else:
-                matrix = self.matrix
-        else:
-            #out = np.zeros_like(self.patches[0].feature_matrix)
-            #shape = out.shape
-            if self.matrix_is_normalized:
-                matrix = self.normalized_feature_matrix
-            else:
-                matrix = self.feature_matrix
+    def decode(self,coefs,mean):
         #for idx in coefs.nonzero()[0]:
-        #    out += coefs[idx]*matrix[:,idx].reshape(shape)
-        #out = np.dot(matrix,coefs).reshape(shape)
-        #out = (np.dot(matrix,coefs)).reshape(self.patches[0].matrix.shape)
+        #    out += coefs[idx]*self.normalized_matrix[:,idx].reshape(shape)
         out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].matrix.shape)
-        #out += mean
         out += np.real(mean)
         return(out)
 
@@ -671,12 +597,8 @@ class ocdict():
         self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=True)[:rows*cols]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         for idx, a in np.ndenumerate(axis):
-            #a.set_xticks = ''
-            #a.set_yticks = ''
             a.set_axis_off()
             a.imshow(self.delm_by_var[rows*idx[0] + idx[1]].matrix,interpolation='nearest')
-            #print(delm_by_var[rows*idx[0] + idx[1]].matrix.var())
-        #fig.tight_layout()
         fig.show()
         
     
