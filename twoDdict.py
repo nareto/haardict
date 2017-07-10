@@ -136,7 +136,7 @@ def covariance_matrix(patches):
     ret /= len(patches)
     return(ret)
 
-def learn_dict(paths,twomeans_on_patches=False,haar_dict_on_patches=True,l=3,r=3,cluster_epsilon=1.e-2):
+def learn_dict(paths,l=3,r=3,cluster_epsilon=1.e-2):
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -151,12 +151,11 @@ def learn_dict(paths,twomeans_on_patches=False,haar_dict_on_patches=True,l=3,r=3
     twodpca_instance = twodpca(patches,l,r)
     twodpca_instance.compute_simple_bilateral_2dpca()
 
-    if not (twomeans_on_patches and haar_dict_on_patches):
-        for p in patches:
-            p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
+    for p in patches:
+        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    ocd.twomeans_cluster(twomeans_on_patches,haar_dict_on_patches,epsilon=cluster_epsilon)
+    ocd.twomeans_cluster(epsilon=cluster_epsilon)
 
     return(twodpca_instance,ocd)
 
@@ -193,10 +192,6 @@ def learn_dict_ksvd(paths,ndictelements,T0):
     patches = []
     for i in images:
         patches += [Patch(p) for p in extract_patches(i)]
-    #pca_instance = pca(patches,k)
-    #pca_instance.compute_pca()
-    #for p in patches:
-    #    p.compute_feature_vector(pca_instance.eigenvectors)
     ocd = ocdict(patches)
     ocd.ksvd_dict(ndictelements,T0)
 
@@ -223,7 +218,7 @@ class Patch():
         if self.feature_matrix is not None and patch.feature_matrix is not None:
             p.feature_matrix = self.feature_matrix + patch.feature_matrix
         if self.feature_vector is not None and patch.feature_vector is not None:
-            p.feature_vectro = self.feature_vector + patch.feature_vector
+            p.feature_vector = self.feature_vector + patch.feature_vector
         return(p)
 
     def __mul__(self,scalar):
@@ -271,8 +266,6 @@ class pca():
         length = self.patches[0].matrix.flatten().shape[0]
         cov = covariance_matrix([x.matrix.flatten().reshape(length,1).transpose() for x in self.patches])
         self.eigenvalues,self.eigenvectors = sslinalg.eigsh(cov,self.k)
-        #self.eigenvalues,self.eigenvectors = np.linalg.eig(cov)
-
         
             
 class twodpca():
@@ -434,17 +427,11 @@ class ocdict():
     def slink_kmeans_cluster(self):
         pass
 
-    def twomeans_cluster(self,two_means_on_patches=False,haar_dict_on_patches=False,minpatches=5,epsilon=1.e-2,pca=False):
+    def twomeans_cluster(self,minpatches=5,epsilon=1.e-2,pca=False):
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
-        #tovisit = queue.Queue()
         tovisit = []
-        #tovisit.put(self.root_node)
         tovisit.append(self.root_node)
-        #if haar_dict_on_patches:
-        #    dictelements = [sum([p.matrix for p in self.patches])] #global average
-        #else:
-        #    dictelements = [sum([p.feature_matrix for p in self.patches])] #global average
-        dictelements = [sum(self.patches[1:],self.patches[0])] #global average
+        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
         self.leafs = []
         cur_nodes = set()
         prev_nodes = set()
@@ -452,19 +439,15 @@ class ocdict():
         depth = 0
         if pca:
             data_matrix = np.vstack([p.feature_vector for p in self.patches]) 
-        elif two_means_on_patches:
-            data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
             data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches]) 
-        #while not tovisit.empty():
         while len(tovisit) > 0:
-            #cur = tovisit.get()
             cur = tovisit.pop()
             lpatches_idx = []
             rpatches_idx = []
             if cur.npatches > minpatches:
                 km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)])
-                if km.inertia_ > epsilon: #TODO: check values
+                if km.inertia_ > epsilon: 
                     for k,label in enumerate(km.labels_):
                         if label == 0:
                             lpatches_idx.append(cur.patches_idx[k])
@@ -473,28 +456,16 @@ class ocdict():
                     lnode = Node(lpatches_idx,cur,True)
                     rnode = Node(rpatches_idx,cur,False)
                     cur.children = (lnode,rnode)
-                    #tovisit.put(lnode)
-                    #tovisit.put(rnode)
                     tovisit.append(lnode)
                     tovisit.append(rnode)
                     depth = max((depth,lnode.depth,rnode.depth))
-                    #if haar_dict_on_patches:
-                    #    centroid1 = sum([self.patches[i].matrix for i in lpatches_idx])
-                    #    centroid2 = sum([self.patches[i].matrix for i in rpatches_idx])
-                    #else:
-                    #    centroid1 = sum([self.patches[i].feature_matrix for i in lpatches_idx])
-                    #    centroid2 = sum([self.patches[i].feature_matrix for i in rpatches_idx])
                     centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     curdict = centroid1/lnode.npatches - centroid2/rnode.npatches
-                    if haar_dict_on_patches:
-                        norm = np.linalg.norm(curdict.matrix)
-                    else:
-                        norm = np.linalg.norm(curdict.feature_matrix)
-                    if norm < 1.e-3:
-                        ipdb.set_trace()
+                    #norm = np.linalg.norm(curdict.feature_matrix)
+                    #if norm < 1.e-3:
+                    #    ipdb.set_trace()
                     dictelements += [curdict]
-            #if len(lpatches_idx) == 0 and len(rpatches_idx) == 0: #?better if cur.children is None
             if cur.children is None:
                 self.leafs.append(cur)
         self.dictelements = dictelements
@@ -515,50 +486,6 @@ class ocdict():
         Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
         octave.addpath('../ksvd')
         D = octave.KSVD(Y,param)
-    #    length = self.patches[0].matrix.flatten().shape[0]
-    #    Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
-    #    n,N = Y.shape
-    #    #D = np.random.uniform(size=(n,K))
-    #    D = np.zeros((n,K))
-    #    for k in range(K):
-    #        randidx = np.random.randint(0,len(self.patches))
-    #        D[:,k] = self.patches[randidx].matrix.flatten()#.reshape(length,1)
-    #    #center Y
-    #    for j in range(N):
-    #        col = Y[:,j]
-    #        mean = np.mean(col)
-    #        col -= mean
-    #    #for j in range(K):
-    #    #    col = D[:,j]
-    #    #    col /= np.linalg.norm(col)
-    #    for it in range(maxiter):
-    #        #sparse coding stage
-    #        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
-    #        omp.fit(D,Y)
-    #        X = omp.coef_.transpose()
-    #
-    #        #dictionary update
-    #        for k in range(K):
-    #            xkT = X[k,:]
-    #            wk = xkT.nonzero()[0]
-    #            cwk = len(wk)
-    #            if cwk == 0:
-    #                continue #TODO: is it correct?
-    #            Wk = scipy.sparse.csc_matrix((np.ones(cwk),(wk,np.arange(cwk))),shape=(N,cwk))
-    #            xkR = Wk.transpose().dot(xkT)
-    #            EkR = Wk.transpose().dot(Y.transpose()).transpose()
-    #            for j in range(K):
-    #                if j == k:
-    #                    continue
-    #                #rank1approx = np.dot(D[:,j],X[j,:])
-    #                #EkR -= Wk.transpose().dot(rank1approx.transpose()).transpose()
-    #                EkR -= np.dot(D[:,j].reshape(D.shape[0],1), xkR.reshape(1,cwk))
-    #            U,Delta,V = np.linalg.svd(EkR)
-    #            D[:,k] = U[:,0]
-    #            xkR = Delta[0]*V[0,:]
-    #            for idx,col in np.ndenumerate(wk):
-    #                X[k,col] = xkR[idx]
-    #
         self.matrix = D
         self.matrix_computed = True
         self.dictelements = []
@@ -586,6 +513,9 @@ class ocdict():
         coef = omp.coef_
         return(coef,mean)
 
+    def sparse_code_tree(self,input_patch,sparsity=-1):
+        pass
+    
     def decode(self,coefs,mean):
         #for idx in coefs.nonzero()[0]:
         #    out += coefs[idx]*self.normalized_matrix[:,idx].reshape(shape)
@@ -621,56 +551,3 @@ class Node():
     def patches_list(self,ocdict):
         return([ocdict.patches[i] for i in self.patches_idx])
 
-    #def build_patches_card_list(self):
-    #    out = []
-    #    for leaf in self.leafs:
-    #        out.append(leaf.npatches)
-    #    return(out)
-    #    
-    #    
-    #def compute_tree(self,minpatches=2,epsilon=1.e-9):
-    #    tovisit = queue.Queue()
-    #    tovisit.put(self)
-    #    dictelements = []
-    #    self.leafs = []
-    #    cur_nodes = set()
-    #    prev_nodes = set()
-    #    prev_nodes.add(self)
-    #    depth = 0
-    #    while not tovisit.empty():
-    #        cur = tovisit.get()
-    #        c1,c2 = cur.branch(epsilon,minpatches)
-    #        if c1 is None and c2 is None:
-    #            #in this case do not branch. we arrived at a leaf
-    #            self.leafs += [cur]
-    #            continue
-    #        if cur in prev_nodes:
-    #            cur_nodes.add(c1)
-    #            cur_nodes.add(c2)
-    #        else:
-    #            prev_nodes = cur_nodes
-    #            cur_nodes = set()
-    #            depth += 1
-    #        centroid1 = sum([p.matrix for p in c1.patches])
-    #        centroid2 = sum([p.matrix for p in c2.patches])
-    #        curdict = centroid1/c1.npatches - centroid2/c2.npatches
-    #        if np.linalg.norm(curdict) < 1.e-3:
-    #            ipdb.set_trace()
-    #        dictelements += [curdict]
-    #        tovisit.put(c1)
-    #        tovisit.put(c2)
-    #    self.dictelements = dictelements
-    #    self.depth = depth
-    #    return(dictelements)
-    #    
-    #def branch(self,epsilon,minpatches):
-    #    if self.children is not None:
-    #        raise Exception("Node already has children")
-    #    n1,n2 = None,None
-    #    if self.npatches > minpatches:
-    #        sep_idx,val,centroid_dist = oneDtwomeans([p.eigid for p in self.patches])
-    #        if centroid_dist > epsilon:
-    #            p1,p2 = self.patches[:sep_idx],self.patches[sep_idx:]
-    #            n1,n2 = Node(p1,self),Node(p2,self)
-    #            self.children = [n1,n2]
-    #    return(n1,n2)

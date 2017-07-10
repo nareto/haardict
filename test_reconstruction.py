@@ -5,7 +5,7 @@ ocdict = twoDdict.ocdict(filepath=sys.argv[1])
 imgpath = sys.argv[2]
 
 
-sparsity = 20
+sparsity = 2
 clip = False
 twodpca = None
 plot = True
@@ -22,8 +22,6 @@ outpatches = []
 coefsnonzeros = []
 for p in patches:
     patch = twoDdict.Patch(p)
-    if use_feature_matrices:
-        patch.compute_feature_matrix(twodpca.U,twodpca.V)
     coefs,mean = ocdict.sparse_code(patch,spars)
     outpatches.append(ocdict.decode(coefs,mean))
     coefsnonzeros.append(len(coefs.nonzero()[0]))
