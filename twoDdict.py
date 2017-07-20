@@ -8,6 +8,9 @@ import skimage.io
 import scipy.sparse
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
+from sklearn.cluster import SpectralClustering
+from sklearn.cluster import ward_tree
+from sklearn.neighbors import kneighbors_graph
 from oct2py import octave
 import gc
 import queue
@@ -48,6 +51,24 @@ def HaarPSI(img1,img2):
     octave.eval('pkg load image')
     haarpsi = octave.HaarPSI(img1,img2)
     return(haarpsi)
+
+
+def affinity_matrix(X,sigma=1,threshold=0.5):
+    nsamples,dim = X.shape
+    W = np.zeros(shape=(nsamples,nsamples))
+    dists = []
+    for i in range(nsamples):
+        for j in range(i+1):
+            v_i = X[i,:]
+            v_j = X[j,:]
+            d_ij = np.linalg.norm(v_i - v_j)
+            dists.append(d_ij)
+            if d_ij < threshold:
+                w_ij = np.exp(-d_ij/sigma)
+                W[i,j] = w_ij
+                W[j,i] = w_ij
+    return(W,dists)
+
 
 def centroid(values):
     if len(values) == 0:
@@ -197,7 +218,28 @@ def learn_dict_ksvd(paths,ndictelements,T0):
 
     return(ocd)
 
+def learn_dict_spectralclustering(paths,l=3,r=3):
+    images = []
+    for f in paths:
+        if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+            images.append(skimage.io.imread(f,as_grey=True))
+        elif f[-3:].upper() in  ['NPY']:
+            images.append(np.load(f))
+    print('Learning from images: %s' % paths)
 
+    patches = []
+    for i in images:
+        patches += [Patch(p) for p in extract_patches(i)]
+    twodpca_instance = twodpca(patches,l,r)
+    twodpca_instance.compute_simple_bilateral_2dpca()
+
+    for p in patches:
+        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
+
+    ocd = ocdict(patches)
+    ocd.spectral_cluster()
+
+    return(twodpca_instance,ocd)
 
 class Patch():
     def __init__(self,matrix):
@@ -428,6 +470,7 @@ class ocdict():
         pass
 
     def twomeans_cluster(self,minpatches=5,epsilon=1.e-2,pca=False):
+        clusteronpatches = False
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -439,6 +482,8 @@ class ocdict():
         depth = 0
         if pca:
             data_matrix = np.vstack([p.feature_vector for p in self.patches]) 
+        elif clusteronpatches:
+            data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
             data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches]) 
         while len(tovisit) > 0:
@@ -453,15 +498,17 @@ class ocdict():
                             lpatches_idx.append(cur.patches_idx[k])
                         if label == 1:
                             rpatches_idx.append(cur.patches_idx[k])
-                    lnode = Node(lpatches_idx,cur,True)
-                    rnode = Node(rpatches_idx,cur,False)
+                    centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    lnode = Node(lpatches_idx,cur,centroid1,True)
+                    rnode = Node(rpatches_idx,cur,centroid2,False)
                     cur.children = (lnode,rnode)
-                    tovisit.append(lnode)
-                    tovisit.append(rnode)
+                    #tovisit.append(lnode)
+                    #tovisit.append(rnode)
+                    tovisit = [lnode] + tovisit
+                    tovisit = [rnode] + tovisit
                     depth = max((depth,lnode.depth,rnode.depth))
-                    centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
-                    centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-                    curdict = centroid1/lnode.npatches - centroid2/rnode.npatches
+                    curdict = centroid1 - centroid2
                     #norm = np.linalg.norm(curdict.feature_matrix)
                     #if norm < 1.e-3:
                     #    ipdb.set_trace()
@@ -472,8 +519,88 @@ class ocdict():
         self.tree_depth = depth
         self.clustered = True
         self.compute_cluster_centroids()
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         return(self.dictelements)
 
+    def spectral_cluster(self,minpatches=50):
+        clusteronpatches = False
+        self.root_node = Node(tuple(np.arange(self.npatches)),None)
+        tovisit = []
+        tovisit.append(self.root_node)
+        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
+        self.leafs = []
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
+        data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        depth = 0
+        nneighs = int(self.root_node.npatches/3)
+        affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance').todense()
+        beta = 5
+        eps = 0
+        affinity_matrix = np.exp(-beta * affinity_matrix /affinity_matrix[affinity_matrix.nonzero()].std()) + eps
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            lpatches_idx = []
+            rpatches_idx = []
+            if cur.npatches > minpatches: #TODO: better stop criteria based on NCut value
+                #cur_data = data_matrix[np.array(cur.patches_idx)]
+                #cur_data = data_matrix[cur.patches_idx,:]
+                aff_mat = affinity_matrix[cur.patches_idx,:][:,cur.patches_idx]
+                aff_mat = 0.5*(aff_mat + aff_mat.transpose())
+                print(depth, cur.npatches,aff_mat.shape)
+                sc = SpectralClustering(n_clusters=2, eigen_solver='arpack',affinity="precomputed",assign_labels='discretize')
+                sc.fit(aff_mat)
+                for k,label in enumerate(sc.labels_):
+                    if label == 0:
+                        lpatches_idx.append(cur.patches_idx[k])
+                    if label == 1:
+                        rpatches_idx.append(cur.patches_idx[k])
+                if len(lpatches_idx) > 0 and len(rpatches_idx)> 0:
+                    centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    lnode = Node(lpatches_idx,cur,centroid1,True)
+                    rnode = Node(rpatches_idx,cur,centroid2,False)
+                    cur.children = (lnode,rnode)
+                    #tovisit.append(lnode)
+                    #tovisit.append(rnode)
+                    tovisit = [lnode] + tovisit
+                    tovisit = [rnode] + tovisit
+                    depth = max((depth,lnode.depth,rnode.depth))
+                    curdict = centroid1 - centroid2
+                    #norm = np.linalg.norm(curdict.feature_matrix)
+                    #if norm < 1.e-3:
+                    #    ipdb.set_trace()
+                    dictelements += [curdict]
+            if cur.children is None:
+                self.leafs.append(cur)
+        self.dictelements = dictelements
+        self.tree_depth = depth
+        self.clustered = True
+        self.compute_cluster_centroids()
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        return(self.dictelements)
+
+    #def ward_cluster(self,minpatches=5,epsilon=1.e-2,pca=False):
+    #    clusteronpatches = False
+    #
+    #    dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
+    #    self.leafs = []
+    #
+    #    data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+    #    ward = ward_tree
+    #    children = ward[0]
+    #    self.root_node = Node(None,None)
+    #    for idx,child in enumerate(children[::-1]):
+    #        
+    #    self.dictelements = dictelements
+    #    self.tree_depth = depth
+    #    self.clustered = True
+    #    self.compute_cluster_centroids()
+    #    self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+    #    return(self.dictelements)
+
+    
     def ksvd_dict(self,K,L,maxiter=5):
         param = {'InitializationMethod': 'DataElements',
                  'K': K,
@@ -503,18 +630,59 @@ class ocdict():
         mean = np.mean(y)
         y -= mean
         #outnorm = np.linalg.norm(y)
-        matrix = self.matrix
-        normalize = self.matrix_is_normalized
-        if normalize:
-            #y /= outnorm
-            matrix = self.normalized_matrix
-            norm_coefs = self.normalization_coefficients
+        #matrix = self.matrix
+        #normalize = self.matrix_is_normalized
+        #if normalize:
+        #    #y /= outnorm
+        #    matrix = self.normalized_matrix
+        #    norm_coefs = self.normalization_coefficients
+        matrix = self.normalized_matrix
         omp.fit(matrix,y)
         coef = omp.coef_
         return(coef,mean)
 
-    def sparse_code_tree(self,input_patch,sparsity=-1):
-        pass
+    def sparse_code_tree(self,input_patch,distonpatches,sparsity=-1):
+        #data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        cur_node = self.root_node
+        next_node = None
+        point = input_patch
+        coef = np.zeros(len(self.dictelements))
+        input_patch.matrix -= input_patch.matrix.mean()
+        input_patch.feature_matrix -= input_patch.feature_matrix.mean()
+        while cur_node.children is not None:
+            left_dist = np.linalg.norm(point.matrix - cur_node.children[0].centroid.matrix)
+            right_dist = np.linalg.norm(point.matrix - cur_node.children[1].centroid.matrix)
+            left_dist_feat = np.linalg.norm(point.feature_matrix - cur_node.children[0].centroid.feature_matrix)
+            right_dist_feat = np.linalg.norm(point.feature_matrix - cur_node.children[1].centroid.feature_matrix)
+            if distonpatches:
+                ld = left_dist
+                rd = right_dist
+            else:
+                ld = left_dist_feat
+                rd = right_dist_feat
+            if ld < rd:
+                marker = 'L'
+                next_node = cur_node.children[0]
+                print(left_dist,left_dist_feat)
+            else:
+                marker = 'R'
+                next_node = cur_node.children[1]
+                print(right_dist,right_dist_feat)
+            #print(marker+' left: %3f right %3f' % (left_dist,right_dist))
+            cur_node = next_node
+        #print(cur_node.depth)
+        return(cur_node.centroid)
+
+    #def haar_tree_decode(self):
+    #    tovisit = [self.root_node]
+    #    prev_centroid = self.dictelements[0]
+    #    decoded_centroid = [prev_centroid]
+    #    while tovisit: #WRONG CONDITION
+    #        cur_node = tovisit.pop()
+    #        tovisit = [cur_node.children[0],cur_node.children[1]]+ tovisit
+    #        decoded_centroid += [prev_centroid ]
+    #    #return(cur_node.centroid)
+    
     
     def decode(self,coefs,mean):
         #for idx in coefs.nonzero()[0]:
@@ -533,7 +701,7 @@ class ocdict():
         
     
 class Node():
-    def __init__(self,patches_idx,parent,isleftchild=True):
+    def __init__(self,patches_idx,parent,centroid=None,isleftchild=True):
         self.parent = parent
         if parent is None:
             self.depth = 0
@@ -544,8 +712,11 @@ class Node():
                 self.idstr = parent.idstr + '0'
             else:
                 self.idstr = parent.idstr + '1'
+        self.centroid = centroid
         self.children = None
-        self.patches_idx = tuple(patches_idx) #indexes of d.patches_idx where d is an ocdict
+        self.patches_idx = None
+        if patches_idx is not None:
+            self.patches_idx = tuple(patches_idx) #indexes of d.patches_idx where d is an ocdict
         self.npatches= len(self.patches_idx)
 
     def patches_list(self,ocdict):

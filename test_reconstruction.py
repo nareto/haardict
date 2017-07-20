@@ -5,7 +5,7 @@ ocdict = twoDdict.ocdict(filepath=sys.argv[1])
 imgpath = sys.argv[2]
 
 
-sparsity = 2
+sparsity = 20
 clip = False
 twodpca = None
 plot = True
