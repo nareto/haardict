@@ -3,6 +3,7 @@ import pickle
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.sparse import csr_matrix
 import scipy.sparse.linalg as sslinalg
 import skimage.io
 import scipy.sparse
@@ -218,7 +219,7 @@ def learn_dict_ksvd(paths,ndictelements,T0):
 
     return(ocd)
 
-def learn_dict_spectralclustering(paths,l=3,r=3):
+def learn_dict_spectral(paths,l=3,r=3):
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -237,7 +238,30 @@ def learn_dict_spectralclustering(paths,l=3,r=3):
         p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    ocd.spectral_cluster()
+    ocd.spectral_cluster2()
+
+    return(twodpca_instance,ocd)
+
+def learn_dict_ward_tree(paths,l=3,r=3):
+    images = []
+    for f in paths:
+        if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+            images.append(skimage.io.imread(f,as_grey=True))
+        elif f[-3:].upper() in  ['NPY']:
+            images.append(np.load(f))
+    print('Learning from images: %s' % paths)
+
+    patches = []
+    for i in images:
+        patches += [Patch(p) for p in extract_patches(i)]
+    twodpca_instance = twodpca(patches,l,r)
+    twodpca_instance.compute_simple_bilateral_2dpca()
+
+    for p in patches:
+        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
+
+    ocd = ocdict(patches)
+    ocd.ward_cluster()
 
     return(twodpca_instance,ocd)
 
@@ -498,8 +522,12 @@ class ocdict():
                             lpatches_idx.append(cur.patches_idx[k])
                         if label == 1:
                             rpatches_idx.append(cur.patches_idx[k])
-                    centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
-                    centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    #centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    #centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    centroid1 /= np.linalg.norm(centroid1.matrix)
+                    centroid2 /= np.linalg.norm(centroid2.matrix)
                     lnode = Node(lpatches_idx,cur,centroid1,True)
                     rnode = Node(rpatches_idx,cur,centroid2,False)
                     cur.children = (lnode,rnode)
@@ -581,24 +609,171 @@ class ocdict():
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         return(self.dictelements)
 
-    #def ward_cluster(self,minpatches=5,epsilon=1.e-2,pca=False):
-    #    clusteronpatches = False
-    #
-    #    dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
-    #    self.leafs = []
-    #
-    #    data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-    #    ward = ward_tree
-    #    children = ward[0]
-    #    self.root_node = Node(None,None)
-    #    for idx,child in enumerate(children[::-1]):
-    #        
-    #    self.dictelements = dictelements
-    #    self.tree_depth = depth
-    #    self.clustered = True
-    #    self.compute_cluster_centroids()
-    #    self.tree_sparsity = len(self.leafs)/2**self.tree_depth
-    #    return(self.dictelements)
+    def spectral_cluster2(self,minpatches=50):
+        clusteronpatches = False
+        self.root_node = Node(tuple(np.arange(self.npatches)),None)
+        tovisit = []
+        tovisit.append(self.root_node)
+        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
+        self.leafs = []
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
+        data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        depth = 0
+        nneighs = int(self.root_node.npatches/10)
+        affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        beta = 5
+        eps = 0
+        dadj = affinity_matrix.todense()
+        std = dadj[dadj.nonzero()].std()
+        affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            lpatches_idx = []
+            rpatches_idx = []
+            if cur.npatches > minpatches: #TODO: better stop criteria based on NCut value
+                #cur_data = data_matrix[np.array(cur.patches_idx)]
+                #cur_data = data_matrix[cur.patches_idx,:]
+                aff_mat = affinity_matrix[cur.patches_idx,:][:,cur.patches_idx]
+                aff_mat = 0.5*(aff_mat + aff_mat.transpose())
+                diag = np.array([row.sum() for row in aff_mat[:,:]])
+                diagsqrt = np.diag(diag**(-1/2))
+                mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
+                print(depth, cur.npatches,aff_mat.shape)
+                egval,egvec = sslinalg.eigsh(mat,k=2,which='SM')
+                vec = egvec[:,1] #second eigenvalue
+                leftrep = Patch(np.zeros_like(self.patches[0].matrix))
+                rightrep = Patch(np.zeros_like(self.patches[0].matrix))
+                #simple mean thresholding:
+                mean = vec.mean()
+                isinleftcluster = vec > mean
+                touchA,touchB = (0,0)
+                for k,label in np.ndenumerate(isinleftcluster):
+                    k = k[0]
+                    if label:
+                        lpatches_idx.append(cur.patches_idx[k])
+                        #leftrep += vec[k]*self.patches[k]
+                        leftrep += self.patches[k]
+                        touchA += 1
+                    else:
+                        rpatches_idx.append(cur.patches_idx[k])
+                        #rightrep += vec[k]*self.patches[k]
+                        rightrep += self.patches[k]
+                        touchB += 1
+                    #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
+                    #    ipdb.set_trace()
+                leftrep /= np.linalg.norm(leftrep.matrix)
+                rightrep /= np.linalg.norm(rightrep.matrix)
+                if len(lpatches_idx) > 0 and len(rpatches_idx)> 0:
+                    lnode = Node(lpatches_idx,cur,leftrep,True)
+                    rnode = Node(rpatches_idx,cur,rightrep,False)
+                    cur.children = (lnode,rnode)
+                    #tovisit.append(lnode)
+                    #tovisit.append(rnode)
+                    tovisit = [lnode] + tovisit
+                    tovisit = [rnode] + tovisit
+                    depth = max((depth,lnode.depth,rnode.depth))
+                    curdict = leftrep - rightrep
+                    #norm = np.linalg.norm(curdict.feature_matrix)
+                    #if norm < 1.e-3:
+                    #    ipdb.set_trace()
+                    dictelements += [curdict]
+            if cur.children is None:
+                self.leafs.append(cur)
+        self.dictelements = dictelements
+        self.tree_depth = depth
+        self.clustered = True
+        self.compute_cluster_centroids()
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        return(self.dictelements)
+
+    
+    def ward_cluster(self,minpatches=20):
+        clusteronpatches = False
+    
+        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
+        self.leafs = []
+    
+        data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        ward = ward_tree(data_matrix)
+        children = ward[0]
+        self.root_node = Node(None,None)
+        nodes = [None]*(children.max() + 2)
+        nodes[-1] = self.root_node
+
+        #first pass to build tree 
+        #for parentidx,childsidx in zip(range(len(children)*2-2,len(children)-1,-1),children[::-1]):
+        for idx,childsidx in zip(range(len(children),0,-1),children[::-1]):
+            parentidx = idx*2
+            parent = nodes[parentidx]
+            if parent is None:
+                parent = Node(None,None)
+                nodes[parentidx] = parent
+            lchildidx,rchildidx = childsidx
+            #if nodes[lchildidx] is not None or nodes[rchildidx] is not None:
+            #    raise Exception("This shouldn't happen")
+            if nodes[lchildidx] is not None:
+                nodes[lchildidx].parent = parent
+            else:
+                lchild = Node(None,parent)                
+            if nodes[rchildidx] is not None:
+                nodes[rchildidx].parent = parent
+                nodes[rchildidx].isleftchild = False
+            else:
+                rchild = Node(None,parent,isleftchild=False)
+            if lchildidx <= len(children): #i.e. it's a leaf node
+                lchild.patches_idx = (lchildidx,)
+                lchild.npatches = 1
+                self.leafs.append(lchild)
+            if rchildidx <= len(children): #i.e. it's a leaf node
+                rchild.patches_idx = (rchildidx,)
+                rchild.npatches = 1
+                self.leafs.append(rchild)
+            parent.children = (lchild,rchild)
+            nodes[lchildidx] = lchild
+            nodes[rchildidx] = rchild
+
+        #second pass bottom-up to set patches_idx
+        print('2')
+        tovisit = set(self.leafs)
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            parent = cur.parent
+            if parent.patches_idx is None:
+                parent.patches_idx = cur.patches_idx
+            else:
+                parent.patches_idx += cur.patches_idx
+            parent.npatches = len(parent.patches_idx)
+            if parent.parent is not None: #if it's not the root node
+                tovisit.add(parent)
+
+        #final pass to construct the dictionary
+        print('3')
+        tovisit = [self.root_node]
+        depth = 0
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            if cur.npatches > minpatches:
+                lchild,rchild = cur.children
+                lchild.depth = cur.depth + 1
+                rchild.depth = cur.depth + 1
+                lchild.idstr += '0'
+                rchild.idstr += '1'
+                lpatches_idx,rpatches_idx = lchild.patches_idx,rchild.patches_idx
+                centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                tovisit = [lchild,rchild]
+                depth = max((depth,lnode.depth,rnode.depth))
+                curdict = centroid1 - centroid2
+                dictelements += [curdict]
+        
+        self.dictelements = dictelements
+        self.tree_depth = depth
+        self.clustered = True
+        self.compute_cluster_centroids()
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        return(self.dictelements)
 
     
     def ksvd_dict(self,K,L,maxiter=5):
@@ -691,14 +866,45 @@ class ocdict():
         out += np.real(mean)
         return(out)
 
-    def imshow(self,rows=10,cols=10):
-        self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=True)[:rows*cols]
+    def show_dict(self,rows=10,cols=10):
+        self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=False)[:rows*cols]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         for idx, a in np.ndenumerate(axis):
             a.set_axis_off()
             a.imshow(self.delm_by_var[rows*idx[0] + idx[1]].matrix,interpolation='nearest')
-        fig.show()
-        
+        plt.show()
+
+    def show_clusters(self,rows=10,cols=10,startingnode=None):
+        clusters = []
+        if startingnode is None:
+            tovisit = [self.root_node]
+        else:
+            curn = self.root_node
+            for c in startingnode:
+                nextn = curn.children[int(c)]
+            tovisit = [nextn]
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            centroid = sum([self.patches[i] for i in cur.patches_idx[1:]],self.patches[cur.patches_idx[0]])
+            #centroid = sum([self.patches[i] for i in cur.patches_idx])
+            clusters.append(centroid)
+            if cur.children is not None:
+                tovisit = [cur.children[0]] + tovisit
+                tovisit = [cur.children[1]] + tovisit
+        #self.clust_by_var = sorted(clusters,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=True)[:rows*cols]
+        self.clust_by_var = clusters
+        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+        if len(axis.shape) == 2:
+            for idx, a in np.ndenumerate(axis):
+                a.set_axis_off()
+                a.imshow(self.clust_by_var[rows*idx[0] + idx[1]].matrix,interpolation='nearest')
+        else:
+            for idx, a in np.ndenumerate(axis):
+                a.set_axis_off()
+                a.imshow(self.clust_by_var[idx[0]].matrix,interpolation='nearest')
+
+        plt.show()
+        return(clusters)
     
 class Node():
     def __init__(self,patches_idx,parent,centroid=None,isleftchild=True):
@@ -717,7 +923,7 @@ class Node():
         self.patches_idx = None
         if patches_idx is not None:
             self.patches_idx = tuple(patches_idx) #indexes of d.patches_idx where d is an ocdict
-        self.npatches= len(self.patches_idx)
+            self.npatches= len(self.patches_idx)
 
     def patches_list(self,ocdict):
         return([ocdict.patches[i] for i in self.patches_idx])

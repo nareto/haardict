@@ -1,3 +1,5 @@
+import numpy as np
+import matplotlib.pyplot as plt
 import twoDdict
 import sys
 
@@ -5,7 +7,7 @@ ocdict = twoDdict.ocdict(filepath=sys.argv[1])
 imgpath = sys.argv[2]
 
 
-sparsity = 20
+sparsity = 2
 clip = False
 twodpca = None
 plot = True
