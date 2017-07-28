@@ -238,7 +238,7 @@ def learn_dict_spectral(paths,l=3,r=3):
         p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    ocd.spectral_cluster2()
+    ocd.spectral_cluster()
 
     return(twodpca_instance,ocd)
 
@@ -550,7 +550,7 @@ class ocdict():
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         return(self.dictelements)
 
-    def spectral_cluster(self,minpatches=50):
+    def spectral_cluster(self,minpatches=5):
         clusteronpatches = False
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
@@ -560,68 +560,11 @@ class ocdict():
         cur_nodes = set()
         prev_nodes = set()
         prev_nodes.add(self)
-        data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        #data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        #data_matrix = np.vstack([(p.feature_matrix/np.linalg.norm(p.feature_matrix)).flatten() for p in self.patches])
+        data_matrix = np.vstack([(p.matrix/np.linalg.norm(p.matrix)).flatten() for p in self.patches])
         depth = 0
         nneighs = int(self.root_node.npatches/3)
-        affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance').todense()
-        beta = 5
-        eps = 0
-        affinity_matrix = np.exp(-beta * affinity_matrix /affinity_matrix[affinity_matrix.nonzero()].std()) + eps
-        while len(tovisit) > 0:
-            cur = tovisit.pop()
-            lpatches_idx = []
-            rpatches_idx = []
-            if cur.npatches > minpatches: #TODO: better stop criteria based on NCut value
-                #cur_data = data_matrix[np.array(cur.patches_idx)]
-                #cur_data = data_matrix[cur.patches_idx,:]
-                aff_mat = affinity_matrix[cur.patches_idx,:][:,cur.patches_idx]
-                aff_mat = 0.5*(aff_mat + aff_mat.transpose())
-                print(depth, cur.npatches,aff_mat.shape)
-                sc = SpectralClustering(n_clusters=2, eigen_solver='arpack',affinity="precomputed",assign_labels='discretize')
-                sc.fit(aff_mat)
-                for k,label in enumerate(sc.labels_):
-                    if label == 0:
-                        lpatches_idx.append(cur.patches_idx[k])
-                    if label == 1:
-                        rpatches_idx.append(cur.patches_idx[k])
-                if len(lpatches_idx) > 0 and len(rpatches_idx)> 0:
-                    centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
-                    centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-                    lnode = Node(lpatches_idx,cur,centroid1,True)
-                    rnode = Node(rpatches_idx,cur,centroid2,False)
-                    cur.children = (lnode,rnode)
-                    #tovisit.append(lnode)
-                    #tovisit.append(rnode)
-                    tovisit = [lnode] + tovisit
-                    tovisit = [rnode] + tovisit
-                    depth = max((depth,lnode.depth,rnode.depth))
-                    curdict = centroid1 - centroid2
-                    #norm = np.linalg.norm(curdict.feature_matrix)
-                    #if norm < 1.e-3:
-                    #    ipdb.set_trace()
-                    dictelements += [curdict]
-            if cur.children is None:
-                self.leafs.append(cur)
-        self.dictelements = dictelements
-        self.tree_depth = depth
-        self.clustered = True
-        self.compute_cluster_centroids()
-        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
-        return(self.dictelements)
-
-    def spectral_cluster2(self,minpatches=50):
-        clusteronpatches = False
-        self.root_node = Node(tuple(np.arange(self.npatches)),None)
-        tovisit = []
-        tovisit.append(self.root_node)
-        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
-        self.leafs = []
-        cur_nodes = set()
-        prev_nodes = set()
-        prev_nodes.add(self)
-        data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-        depth = 0
-        nneighs = int(self.root_node.npatches/10)
         affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
         beta = 5
         eps = 0
@@ -640,11 +583,13 @@ class ocdict():
                 diag = np.array([row.sum() for row in aff_mat[:,:]])
                 diagsqrt = np.diag(diag**(-1/2))
                 mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
-                print(depth, cur.npatches,aff_mat.shape)
+                #print(depth, cur.npatches,aff_mat.shape)
                 egval,egvec = sslinalg.eigsh(mat,k=2,which='SM')
                 vec = egvec[:,1] #second eigenvalue
                 leftrep = Patch(np.zeros_like(self.patches[0].matrix))
+                leftrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
                 rightrep = Patch(np.zeros_like(self.patches[0].matrix))
+                rightrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)                                                       
                 #simple mean thresholding:
                 mean = vec.mean()
                 isinleftcluster = vec > mean
@@ -653,19 +598,37 @@ class ocdict():
                     k = k[0]
                     if label:
                         lpatches_idx.append(cur.patches_idx[k])
-                        #leftrep += vec[k]*self.patches[k]
-                        leftrep += self.patches[k]
+                        leftrep += vec[k]*self.patches[cur.patches_idx[k]]
+                        #leftrep += self.patches[k]
                         touchA += 1
                     else:
                         rpatches_idx.append(cur.patches_idx[k])
-                        #rightrep += vec[k]*self.patches[k]
-                        rightrep += self.patches[k]
+                        rightrep += vec[k]*self.patches[cur.patches_idx[k]]
+                        #rightrep += self.patches[k]
                         touchB += 1
                     #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
                     #    ipdb.set_trace()
-                leftrep /= np.linalg.norm(leftrep.matrix)
-                rightrep /= np.linalg.norm(rightrep.matrix)
-                if len(lpatches_idx) > 0 and len(rpatches_idx)> 0:
+                leftrep.matrix /= np.linalg.norm(leftrep.matrix)
+                rightrep.matrix /= np.linalg.norm(rightrep.matrix)
+                leftrep.feature_matrix /= np.linalg.norm(leftrep.feature_matrix)
+                rightrep.feature_matrix /= np.linalg.norm(rightrep.feature_matrix)
+                leftvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in lpatches_idx]))
+                rightvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in rpatches_idx]))
+                #minvar = min(leftvar,rightvar)
+                #print(leftvar,rightvar)
+                leftcentroid = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                rightcentroid = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                #leftspread = sum([np.linalg.norm(self.patches[i].feature_matrix-leftcentroid.feature_matrix) for i in lpatches_idx])
+                #rightspread = sum([np.linalg.norm(self.patches[i].feature_matrix-rightcentroid.feature_matrix) for i in rpatches_idx])
+                leftspread = sum([np.linalg.norm(self.patches[i].matrix-leftcentroid.matrix) for i in lpatches_idx])
+                rightspread = sum([np.linalg.norm(self.patches[i].matrix-rightcentroid.matrix) for i in rpatches_idx])
+                minspread = min(leftspread,rightspread)
+                #print('idstr = %10s leftspread = %4f rightspread = %4f leftvar = %4f rightvar = %4f' %(cur.idstr,leftspread,rightspread,leftvar,rightvar))
+                leftrep = leftcentroid
+                rightrep = rightcentroid
+                #print(np.linalg.norm(leftcentroid.matrix - leftrep.matrix),np.linalg.norm(rightcentroid.matrix - rightrep.matrix))
+                #if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minvar > 1e-7:
+                if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minspread > 1e-7:
                     lnode = Node(lpatches_idx,cur,leftrep,True)
                     rnode = Node(rpatches_idx,cur,rightrep,False)
                     cur.children = (lnode,rnode)
@@ -679,6 +642,8 @@ class ocdict():
                     #if norm < 1.e-3:
                     #    ipdb.set_trace()
                     dictelements += [curdict]
+                else:
+                    print('closing current branch')
             if cur.children is None:
                 self.leafs.append(cur)
         self.dictelements = dictelements
@@ -866,6 +831,21 @@ class ocdict():
         out += np.real(mean)
         return(out)
 
+    def patches_subtree(self,startingnode):
+        patches = []
+        curn = self.root_node
+        for c in startingnode:
+            nextn = curn.children[int(c)]
+            curn = nextn
+        tovisit = [nextn]
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            patches.append(tuple([self.patches[i] for i in cur.patches_idx]))
+            if cur.children is not None:
+                tovisit = [cur.children[0]] + tovisit
+                tovisit = [cur.children[1]] + tovisit
+        return(patches)
+    
     def show_dict(self,rows=10,cols=10):
         self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=False)[:rows*cols]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
@@ -882,27 +862,33 @@ class ocdict():
             curn = self.root_node
             for c in startingnode:
                 nextn = curn.children[int(c)]
+                curn = nextn
             tovisit = [nextn]
         while len(tovisit) > 0:
             cur = tovisit.pop()
             centroid = sum([self.patches[i] for i in cur.patches_idx[1:]],self.patches[cur.patches_idx[0]])
             #centroid = sum([self.patches[i] for i in cur.patches_idx])
-            clusters.append(centroid)
+            if cur.idstr == '':
+                string = 'root'
+            else:
+                string = cur.idstr
+            clusters.append((centroid,string))
             if cur.children is not None:
                 tovisit = [cur.children[0]] + tovisit
                 tovisit = [cur.children[1]] + tovisit
-        #self.clust_by_var = sorted(clusters,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=True)[:rows*cols]
-        self.clust_by_var = clusters
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         if len(axis.shape) == 2:
             for idx, a in np.ndenumerate(axis):
                 a.set_axis_off()
-                a.imshow(self.clust_by_var[rows*idx[0] + idx[1]].matrix,interpolation='nearest')
+                clust,string = clusters[rows*idx[0] + idx[1]]
+                a.imshow(clust.matrix,interpolation='nearest')
+                a.text(0,0,string,color='red')
         else:
             for idx, a in np.ndenumerate(axis):
                 a.set_axis_off()
-                a.imshow(self.clust_by_var[idx[0]].matrix,interpolation='nearest')
-
+                clust,string = clusters[idx[0]]
+                a.imshow(clust.matrix,interpolation='nearest')
+                a.text(0,0,string,color='red')
         plt.show()
         return(clusters)
     

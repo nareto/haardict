@@ -7,10 +7,10 @@ ocdict = twoDdict.ocdict(filepath=sys.argv[1])
 imgpath = sys.argv[2]
 
 
-sparsity = 2
+sparsity = 5
 clip = False
 twodpca = None
-plot = True
+plot = False
 
 psize = (ocdict.height,ocdict.width)
 spars= sparsity
