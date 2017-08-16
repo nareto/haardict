@@ -189,7 +189,7 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
      
     if method not in _METHODS_:
         raise Exception("'method' has to be on of %s" % _METHODS_)
-    elif method == 'ksvd' and ('ndictelements' is not in other_args.keys() or 'T0' is not in other_args.keys()):
+    elif method == 'ksvd' and ('ndictelements' not in other_args.keys() or 'T0'  not in other_args.keys()):
         raise Exception("KSVD method requires setting variables 'ndictelements' and 'T0'")
     images = []
     for f in paths:
@@ -423,6 +423,22 @@ class ocdict():
             self.fnormalization_coefficients[j] = norm
         self.feature_matrix_is_normalized = True
         
+    def mutual_coherence(self):
+        mc = 0
+        mj1,mj2 = None,None
+        ncols = self.matrix.shape[1]
+        for j1 in range(ncols):
+            for j2 in range(j1+1,ncols):
+                col1 = self.matrix[:,j1]
+                col2 = self.matrix[:,j2]
+                sp = np.dot(col1,col2)
+                sp /= np.linalg.norm(col1)*np.linalg.norm(col2)
+                if sp > mc:
+                    mj1 = j1
+                    mj2 = j2
+                    mc = sp
+        return(mc,mj1,mj2)
+        
     def monkey_cluster(self,levels=3):
         """Randomly clusters the data and creates Haar dictionary"""
         
@@ -474,25 +490,31 @@ class ocdict():
         elif clusteronpatches:
             data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
-            data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches]) 
+            data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+        deb = True
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lpatches_idx = []
             rpatches_idx = []
             if cur.npatches > minpatches:
-                km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm
-                if km.inertia_ > epsilon: 
+                km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm...
+                if km.inertia_ > epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):
                         if label == 0:
                             lpatches_idx.append(cur.patches_idx[k])
                         if label == 1:
                             rpatches_idx.append(cur.patches_idx[k])
+                    if deb and (len(lpatches_idx) == 1 or len(rpatches_idx) == 1):
+                        ipdb.set_trace()
+                        deb = False
                     #centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     #centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-                    centroid1 /= np.linalg.norm(centroid1.matrix)
-                    centroid2 /= np.linalg.norm(centroid2.matrix)
+                    #centroid1 /= np.linalg.norm(centroid1.matrix)
+                    #centroid2 /= np.linalg.norm(centroid2.matrix)
+                    centroid1 /= len(lpatches_idx)
+                    centroid2 /= len(rpatches_idx)
                     lnode = Node(lpatches_idx,cur,centroid1,True)
                     rnode = Node(rpatches_idx,cur,centroid2,False)
                     cur.children = (lnode,rnode)
@@ -502,6 +524,8 @@ class ocdict():
                     tovisit = [rnode] + tovisit
                     depth = max((depth,lnode.depth,rnode.depth))
                     curdict = centroid1 - centroid2
+                    curdict.matrix /= np.linalg.norm(curdict.matrix)
+                    curdict.feature_matrix /= np.linalg.norm(curdict.feature_matrix)
                     #norm = np.linalg.norm(curdict.feature_matrix)
                     #if norm < 1.e-3:
                     #    ipdb.set_trace()
@@ -731,7 +755,7 @@ class ocdict():
         for j in range(K):
             self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
     
-        def sparse_code(self,input_patch,sparsity):
+    def sparse_code(self,input_patch,sparsity):
         """Uses OMP to sparsely code input_patch with the dictionary"""
         
         if input_patch.matrix.shape != self.patches[0].matrix.shape:
@@ -762,9 +786,11 @@ class ocdict():
         next_node = None
         point = input_patch
         coef = np.zeros(len(self.dictelements))
-        input_patch.matrix -= input_patch.matrix.mean()
-        input_patch.feature_matrix -= input_patch.feature_matrix.mean()
+        point.matrix -= point.matrix.mean()
+        point.feature_matrix -= point.feature_matrix.mean()
+        centroids = []
         while cur_node.children is not None:
+            centroids.append(cur_node.centroid)
             left_dist = np.linalg.norm(point.matrix - cur_node.children[0].centroid.matrix)
             right_dist = np.linalg.norm(point.matrix - cur_node.children[1].centroid.matrix)
             left_dist_feat = np.linalg.norm(point.feature_matrix - cur_node.children[0].centroid.feature_matrix)
@@ -786,7 +812,8 @@ class ocdict():
             #print(marker+' left: %3f right %3f' % (left_dist,right_dist))
             cur_node = next_node
         #print(cur_node.depth)
-        return(cur_node.centroid)
+        #return(cur_node.centroid)
+        return(centroids)
 
     #def haar_tree_decode(self):
     #    tovisit = [self.root_node]
