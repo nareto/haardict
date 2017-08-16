@@ -216,8 +216,8 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
         ocd.spectral_cluster()
     #elif method == '2ddcit-ward':
     #    ocd.ward_cluster()
-    elif method == '2ddict-spectral':
-        ocd.ksvd_dict(ndictelements,T0)
+    elif method == 'ksvd':
+        ocd.ksvd_dict(other_args['ndictelements'],other_args['T0'])
     return(twodpca_instance,ocd)
 
 class Patch():
@@ -491,7 +491,7 @@ class ocdict():
             data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
             data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-        deb = True
+        #deb = True
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lpatches_idx = []
@@ -504,9 +504,9 @@ class ocdict():
                             lpatches_idx.append(cur.patches_idx[k])
                         if label == 1:
                             rpatches_idx.append(cur.patches_idx[k])
-                    if deb and (len(lpatches_idx) == 1 or len(rpatches_idx) == 1):
-                        ipdb.set_trace()
-                        deb = False
+                    #if deb and (len(lpatches_idx) == 1 or len(rpatches_idx) == 1):
+                    #    ipdb.set_trace()
+                    #    deb = False
                     #centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     #centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
@@ -804,12 +804,12 @@ class ocdict():
             if ld < rd:
                 marker = 'L'
                 next_node = cur_node.children[0]
-                print(left_dist,left_dist_feat)
+                #print(left_dist,left_dist_feat)
             else:
                 marker = 'R'
                 next_node = cur_node.children[1]
-                print(right_dist,right_dist_feat)
-            #print(marker+' left: %3f right %3f' % (left_dist,right_dist))
+                #print(right_dist,right_dist_feat)
+            print(marker+' left: %3f right %3f' % (left_dist,right_dist))
             cur_node = next_node
         #print(cur_node.depth)
         #return(cur_node.centroid)
