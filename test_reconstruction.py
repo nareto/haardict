@@ -1,9 +1,10 @@
+import skimage
 import numpy as np
 import matplotlib.pyplot as plt
 import twoDdict
 import sys
 
-def main(ocdict,imgpath,sparsity=5,plot=False):
+def main(ocdict,imgpath,sparsity=5,plot=True):
 
     clip = False
     twodpca = None
@@ -31,6 +32,10 @@ def main(ocdict,imgpath,sparsity=5,plot=False):
     print('HaarPSI = %f ' % hpi)
     psnrval = twoDdict.psnr(img,out)
     print('PSNR = %f  ' % psnrval)
+    twonorm = np.linalg.norm(img-out)
+    print('2 norm = %f' % twonorm)
+    fronorm = np.linalg.norm(img-out,ord='fro')
+    print('Frobenius norm = %f' % fronorm)
     if plot:
         fig, (ax1, ax2) = plt.subplots(1, 2)#, sharey=True)
         #ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
