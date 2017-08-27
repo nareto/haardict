@@ -6,6 +6,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 import scipy.sparse.linalg as sslinalg
 import skimage.io
+import skimage.color
 import skimage.filters as filters
 import scipy.sparse
 from sklearn.linear_model import OrthogonalMatchingPursuit
@@ -19,10 +20,24 @@ import queue
 
 _METHODS_ = ['2ddict-2means','2ddict-spectral','ksvd']
 
-def rescale(img,newmin=0,newmax=255):
+def read_raw_img(img,as_grey=True):
+    import rawpy
+    raw = rawpy.imread(img)
+    rgb = raw.postprocess()
+    if not as_grey:
+        return(rgb)
+    else:
+        #gray = (rgb[:,:,0] + rgb[:,:,1] + rgb[:,:,2])/3
+        gray = skimage.color.rgb2gray(rgb)
+        return(gray)
+
+def rescale(img,useimgextremes=False,oldmin=0,oldmax=1,newmin=0,newmax=255):
     """Linearly rescales values in img from newmin to newmax"""
-    
-    curmin,curmax = img.min(),img.max()
+
+    if useimgextremes:
+        curmin,curmax = img.min(),img.max()
+    else:
+        curmin,curmax = oldmin,oldmax
     angcoeff = (newmax-newmin)/(curmax-curmin)
     f = lambda x: newmax+angcoeff*(x-curmax)
     out = np.zeros_like(img)
@@ -189,8 +204,8 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
      
     if method not in _METHODS_:
         raise Exception("'method' has to be on of %s" % _METHODS_)
-    elif method == 'ksvd' and ('ndictelements' not in other_args.keys() or 'T0'  not in other_args.keys()):
-        raise Exception("KSVD method requires setting variables 'ndictelements' and 'T0'")
+    elif method == 'ksvd' and ('dictsize' not in other_args.keys() or 'sparsity'  not in other_args.keys()):
+        raise Exception("KSVD method requires setting variables 'dictsize' and 'sparsity'")
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -210,14 +225,19 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
 
     ocd = ocdict(patches)
     if method == '2ddict-2means':
-        cluster_epsilon = 1e-2
+        try:
+            cluster_epsilon = other_args['cluster_epsilon']
+        except KeyError:
+            cluster_epsilon = 1e-2
         ocd.twomeans_cluster(epsilon=cluster_epsilon)
     elif method == '2ddict-spectral':
         ocd.spectral_cluster()
     #elif method == '2ddcit-ward':
     #    ocd.ward_cluster()
     elif method == 'ksvd':
-        ocd.ksvd_dict(other_args['ndictelements'],other_args['T0'])
+        ocd.ksvdbox_dict(dictsize=other_args['dictsize'],sparsity=other_args['sparsity'])
+    ocd._compute_matrix()
+    ocd._normalize_matrix()
     return(twodpca_instance,ocd)
 
 class Patch():
@@ -754,7 +774,27 @@ class ocdict():
         rows,cols = self.patches[0].matrix.shape
         for j in range(K):
             self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
-    
+
+    def ksvdbox_dict(self,dictsize,sparsity,iternum=5):
+        """Computes dictionary using KSVD method. Requires ksvd.m file from ksvdbox13"""
+
+        octave.addpath('ksvdbox/')
+        #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
+        length = self.patches[0].matrix.flatten().shape[0]
+        Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
+        params = {'data': Y,
+                 'Tdata': sparsity,
+                 'dictsize': dictsize,
+                 'memusage': 'normal'} #'low','normal' or 'high'
+        [D,X] = octave.ksvd(params)
+        self.encoding = X
+        self.matrix = D
+        self.matrix_computed = True
+        self.dictelements = []
+        rows,cols = self.patches[0].matrix.shape
+        for j in range(dictsize):
+            self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
+
     def sparse_code(self,input_patch,sparsity):
         """Uses OMP to sparsely code input_patch with the dictionary"""
         

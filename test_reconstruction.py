@@ -16,6 +16,8 @@ def main(ocdict,imgpath,sparsity=5,plot=True):
         img = skimage.io.imread(imgpath,as_grey=True)
     elif imgpath[-3:].upper() in  ['NPY']:
         img = np.load(imgpath)
+    elif imgpath[-4:].upper() == 'TIFF' or imgpath[-3:].upper() == 'CR2':
+        img = twoDdict.rescale(twoDdict.read_raw_img(imgpath))
     patches = twoDdict.extract_patches(img,size=psize)
     outpatches = []
     coefsnonzeros = []
@@ -32,7 +34,7 @@ def main(ocdict,imgpath,sparsity=5,plot=True):
     print('HaarPSI = %f ' % hpi)
     psnrval = twoDdict.psnr(img,out)
     print('PSNR = %f  ' % psnrval)
-    twonorm = np.linalg.norm(img-out)
+    twonorm = np.linalg.norm(img-out,ord=2)
     print('2 norm = %f' % twonorm)
     fronorm = np.linalg.norm(img-out,ord='fro')
     print('Frobenius norm = %f' % fronorm)
