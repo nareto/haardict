@@ -224,14 +224,15 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
         p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    if method == '2ddict-2means':
+    if method[:6] == '2ddict':
         try:
             cluster_epsilon = other_args['cluster_epsilon']
         except KeyError:
             cluster_epsilon = 1e-2
+    if method == '2ddict-2means':
         ocd.twomeans_cluster(epsilon=cluster_epsilon)
     elif method == '2ddict-spectral':
-        ocd.spectral_cluster()
+        ocd.spectral_cluster(epsilon=cluster_epsilon)
     #elif method == '2ddcit-ward':
     #    ocd.ward_cluster()
     elif method == 'ksvd':
@@ -492,7 +493,7 @@ class ocdict():
         self.compute_cluster_centroids()
         return(self.dictelements)
             
-    def twomeans_cluster(self,minpatches=5,epsilon=1.e-2,pca=False):
+    def twomeans_cluster(self,epsilon,minpatches=5,pca=False):
         """Clusters data using recursive 2-means and creates Haar-dictionary"""
         
         clusteronpatches = False
@@ -511,6 +512,7 @@ class ocdict():
             data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
             data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+            #data_matrix = np.vstack([p.feature_matrix.flatten()/np.linalg.norm(p.feature_matrix.flatten()) for p in self.patches])
         #deb = True
         while len(tovisit) > 0:
             cur = tovisit.pop()
@@ -559,7 +561,7 @@ class ocdict():
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         return(self.dictelements)
 
-    def spectral_cluster(self,minpatches=5):
+    def spectral_cluster(self,epsilon,minpatches=5):
         """Clusters data using recursive spectral clustering and creates Haar-dictionary"""
 
         clusteronpatches = False
@@ -579,83 +581,96 @@ class ocdict():
         affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
         beta = 5
         eps = 0
-        dadj = affinity_matrix.todense()
-        std = dadj[dadj.nonzero()].std()
+        #dadj = affinity_matrix.todense()
+        #std = dadj[dadj.nonzero()].std()
+        std = affinity_matrix.data.std()
         affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
+
+                
+        def Ncut(D,W,y):
+            return((y.T.dot(D-W).dot(y))/(y.T.dot(D).dot(y)))
+        
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lpatches_idx = []
             rpatches_idx = []
-            if cur.npatches > minpatches: #TODO: better stop criteria based on NCut value
-                #cur_data = data_matrix[np.array(cur.patches_idx)]
-                #cur_data = data_matrix[cur.patches_idx,:]
+            #if cur.npatches > minpatches: #TODO: better stop criteria based on NCut value
+            #if cur == self.root_node or Ncut(diag,aff_mat,vec) > epsilon:
+            #cur_data = data_matrix[np.array(cur.patches_idx)]
+            #cur_data = data_matrix[cur.patches_idx,:]
+            if cur == self.root_node:
+                aff_mat = 0.5*(affinity_matrix + affinity_matrix.transpose())
+            else:
                 aff_mat = affinity_matrix[cur.patches_idx,:][:,cur.patches_idx]
                 aff_mat = 0.5*(aff_mat + aff_mat.transpose())
-                diag = np.array([row.sum() for row in aff_mat[:,:]])
-                diagsqrt = np.diag(diag**(-1/2))
-                mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
-                #print(depth, cur.npatches,aff_mat.shape)
-                egval,egvec = sslinalg.eigsh(mat,k=2,which='SM')
-                vec = egvec[:,1] #second eigenvalue
-                leftrep = Patch(np.zeros_like(self.patches[0].matrix))
-                #leftrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
-                rightrep = Patch(np.zeros_like(self.patches[0].matrix))
-                #rightrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)                                                       
-                #simple mean thresholding:
-                mean = vec.mean()
-                #isinleftcluster = vec > mean
-                isinleftcluster = vec > filters.threshold_otsu(vec)
-                touchA,touchB = (0,0)
-                for k,label in np.ndenumerate(isinleftcluster):
-                    k = k[0]
-                    if label:
-                        lpatches_idx.append(cur.patches_idx[k])
-                        leftrep += vec[k]*self.patches[cur.patches_idx[k]]
-                        #leftrep += self.patches[k]
-                        touchA += 1
-                    else:
-                        rpatches_idx.append(cur.patches_idx[k])
-                        rightrep += vec[k]*self.patches[cur.patches_idx[k]]
-                        #rightrep += self.patches[k]
-                        touchB += 1
-                    #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
-                    #    ipdb.set_trace()
-                leftrep.matrix /= np.linalg.norm(leftrep.matrix)
-                rightrep.matrix /= np.linalg.norm(rightrep.matrix)
-                #leftrep.feature_matrix /= np.linalg.norm(leftrep.feature_matrix)
-                #rightrep.feature_matrix /= np.linalg.norm(rightrep.feature_matrix)
-                leftvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in lpatches_idx]))
-                rightvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in rpatches_idx]))
-                minvar = min(leftvar,rightvar)
-                print(leftvar,rightvar)
-                leftcentroid = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
-                rightcentroid = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-                #leftspread = sum([np.linalg.norm(self.patches[i].feature_matrix-leftcentroid.feature_matrix) for i in lpatches_idx])
-                #rightspread = sum([np.linalg.norm(self.patches[i].feature_matrix-rightcentroid.feature_matrix) for i in rpatches_idx])
-                leftspread = sum([np.linalg.norm(self.patches[i].matrix-leftcentroid.matrix) for i in lpatches_idx])
-                rightspread = sum([np.linalg.norm(self.patches[i].matrix-rightcentroid.matrix) for i in rpatches_idx])
-                minspread = min(leftspread,rightspread)
-                #print('idstr = %10s leftspread = %4f rightspread = %4f leftvar = %4f rightvar = %4f' %(cur.idstr,leftspread,rightspread,leftvar,rightvar))
-                #leftrep = leftcentroid
-                #rightrep = rightcentroid
-                #print(np.linalg.norm(leftcentroid.matrix - leftrep.matrix),np.linalg.norm(rightcentroid.matrix - rightrep.matrix))
-                if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minvar > 1e-7:
-                #if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minspread > 1e-7:
-                    lnode = Node(lpatches_idx,cur,leftrep,True)
-                    rnode = Node(rpatches_idx,cur,rightrep,False)
-                    cur.children = (lnode,rnode)
-                    #tovisit.append(lnode)
-                    #tovisit.append(rnode)
-                    tovisit = [lnode] + tovisit
-                    tovisit = [rnode] + tovisit
-                    depth = max((depth,lnode.depth,rnode.depth))
-                    curdict = leftrep - rightrep
-                    #norm = np.linalg.norm(curdict.feature_matrix)
-                    #if norm < 1.e-3:
-                    #    ipdb.set_trace()
-                    dictelements += [curdict]
+            diag = np.array([row.sum() for row in aff_mat[:,:]])
+            diagsqrt = np.diag(diag**(-1/2))
+            mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
+            #print(depth, cur.npatches,aff_mat.shape)
+            egval,egvec = sslinalg.eigsh(mat,k=2,which='SA') 
+            vec = egvec[:,1] #second eigenvalue
+            leftrep = Patch(np.zeros_like(self.patches[0].matrix))
+            #leftrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
+            rightrep = Patch(np.zeros_like(self.patches[0].matrix))
+            #rightrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)                                                       
+            #simple mean thresholding:
+            mean = vec.mean()
+            isinleftcluster = vec > mean
+            #isinleftcluster = vec > filters.threshold_otsu(vec)
+            touchA,touchB = (0,0)
+            for k,label in np.ndenumerate(isinleftcluster):
+                k = k[0]
+                if label:
+                    lpatches_idx.append(cur.patches_idx[k])
+                    leftrep += vec[k]*self.patches[cur.patches_idx[k]]
+                    #leftrep += self.patches[k]
+                    touchA += 1
                 else:
-                    print('closing current branch')
+                    rpatches_idx.append(cur.patches_idx[k])
+                    rightrep += vec[k]*self.patches[cur.patches_idx[k]]
+                    #rightrep += self.patches[k]
+                    touchB += 1
+                #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
+                #    ipdb.set_trace()
+            leftrep.matrix /= np.linalg.norm(leftrep.matrix)
+            rightrep.matrix /= np.linalg.norm(rightrep.matrix)
+
+            #leftrep.feature_matrix /= np.linalg.norm(leftrep.feature_matrix)
+            #rightrep.feature_matrix /= np.linalg.norm(rightrep.feature_matrix)
+            leftvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in lpatches_idx]))
+            rightvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in rpatches_idx]))
+            minvar = min(leftvar,rightvar)
+            print(leftvar,rightvar)
+
+            leftcentroid = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+            rightcentroid = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+            #leftspread = sum([np.linalg.norm(self.patches[i].feature_matrix-leftcentroid.feature_matrix) for i in lpatches_idx])
+            #rightspread = sum([np.linalg.norm(self.patches[i].feature_matrix-rightcentroid.feature_matrix) for i in rpatches_idx])
+            #leftspread = sum([np.linalg.norm(self.patches[i].matrix-leftcentroid.matrix) for i in lpatches_idx])
+            #rightspread = sum([np.linalg.norm(self.patches[i].matrix-rightcentroid.matrix) for i in rpatches_idx])
+            #minspread = min(leftspread,rightspread)
+            #print('idstr = %10s leftspread = %4f rightspread = %4f leftvar = %4f rightvar = %4f' %(cur.idstr,leftspread,rightspread,leftvar,rightvar))
+            #leftrep = leftcentroid
+            #rightrep = rightcentroid
+            #print(np.linalg.norm(leftcentroid.matrix - leftrep.matrix),np.linalg.norm(rightcentroid.matrix - rightrep.matrix))
+            #if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minvar > 1e-7:
+            #if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minspread > 1e-7:
+            if len(lpatches_idx) > minpatches and len(rpatches_idx)> minpatches and Ncut(np.diag(diag),aff_mat,vec) > epsilon:
+                lnode = Node(lpatches_idx,cur,leftrep,True)
+                rnode = Node(rpatches_idx,cur,rightrep,False)
+                cur.children = (lnode,rnode)
+                #tovisit.append(lnode)
+                #tovisit.append(rnode)
+                tovisit = [lnode] + tovisit
+                tovisit = [rnode] + tovisit
+                depth = max((depth,lnode.depth,rnode.depth))
+                curdict = leftrep - rightrep
+                #norm = np.linalg.norm(curdict.feature_matrix)
+                #if norm < 1.e-3:
+                #    ipdb.set_trace()
+                dictelements += [curdict]
+            else:
+                print('closing current branch')
             if cur.children is None:
                 self.leafs.append(cur)
         self.dictelements = dictelements

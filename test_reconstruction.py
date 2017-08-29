@@ -45,7 +45,8 @@ def main(ocdict,imgpath,sparsity=5,plot=True):
         ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
         ax2.imshow(out, cmap=plt.cm.gray,interpolation='none')
         #ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
-        fig.show()
+        #fig.show()
+        plt.show()
 
 if __name__ == '__main__':
     main(twoDdict.ocdict(filepath=sys.argv[1]),sys.argv[2])
