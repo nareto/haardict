@@ -564,6 +564,7 @@ class ocdict():
     def spectral_cluster(self,epsilon,minpatches=5):
         """Clusters data using recursive spectral clustering and creates Haar-dictionary"""
 
+        
         clusteronpatches = False
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
@@ -579,21 +580,29 @@ class ocdict():
         #data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         depth = 0
         nneighs = int(self.root_node.npatches/3)
-        affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
-        beta = 1.e-6
+        #affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        beta = 10
         eps = 0
         #dadj = affinity_matrix.todense()
         #std1 = dadj[dadj.nonzero()].std()
         #std = affinity_matrix.data.std()
         std = 1
-        affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
+        expaff_mat = np.zeros(shape=(self.npatches,self.npatches))
+        for i in range(self.npatches):
+            for j in range(i):
+                dist = np.linalg.norm(self.patches[i].matrix - self.patches[j].matrix)
+                expdist = np.exp(-beta*dist/std) + eps
+                expaff_mat[i,j] = expdist
+                expaff_mat[j,i] = expdist
+        #affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
+        expaff_mat = 0.5*(expaff_mat + expaff_mat.transpose())
         self.egvecs = []
                 
         def Ncut(D,W,y):
             num = float(y.T.dot(D-W).dot(y))
             den = float(y.T.dot(D).dot(y))
             return(num/den)
-        
+
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lpatches_idx = []
@@ -602,11 +611,7 @@ class ocdict():
             #if cur == self.root_node or Ncut(diag,aff_mat,vec) > epsilon:
             #cur_data = data_matrix[np.array(cur.patches_idx)]
             #cur_data = data_matrix[cur.patches_idx,:]
-            if cur == self.root_node:
-                aff_mat = 0.5*(affinity_matrix + affinity_matrix.transpose())
-            else:
-                aff_mat = affinity_matrix[cur.patches_idx,:][:,cur.patches_idx]
-                aff_mat = 0.5*(aff_mat + aff_mat.transpose())
+            aff_mat = expaff_mat[cur.patches_idx,:][:,cur.patches_idx]
             diag = np.array([row.sum() for row in aff_mat[:,:]])
             diagsqrt = np.diag(diag**(-1/2))
             mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
@@ -614,15 +619,16 @@ class ocdict():
             egval,egvec = sslinalg.eigsh(mat,k=2,which='SA')
             print("eigenvalues: ", egval)
             vec = egvec[:,1] #second eigenvalue
+            #return(aff_mat,diag,mat,vec)
             leftrep = Patch(np.zeros_like(self.patches[0].matrix))
             #leftrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
             rightrep = Patch(np.zeros_like(self.patches[0].matrix))
-            #rightrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)                                                       
+            #rightrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
             #simple mean thresholding:
             #mean = vec.mean()
             #ipdb.set_trace()
             #isinleftcluster = vec > mean
-            #isinleftcluster = vec > filters.threshold_otsu(vec)
+            isinleftcluster = vec > filters.threshold_otsu(vec)
             #ipdb.set_trace()
             ncutval = None
             thresh_vals = vec.copy()
@@ -631,30 +637,30 @@ class ocdict():
             step = int(len(vec)/10)
             #print("len vec = ", len(vec), "step = ", step)
             #for thresh_val in thresh_vals[-2::-step]:
-            for thresh_val in thresh_vals[::step]:
-                cand_y = vec > thresh_val
-                if cand_y.var() == 0: #cheap way to see if cand_y is constant
-                    continue
-                cand_ncutval = Ncut(np.diag(diag),aff_mat,cand_y)
-                #print("cand ncutval = ", cand_ncutval, "greater : ", len(cand_y.nonzero()[0]))
-                if ncutval is None or cand_ncutval < ncutval:
-                    ncutval = cand_ncutval
-                    isinleftcluster = cand_y
-                    y = cand_y
+            #for thresh_val in thresh_vals[::step]:
+            #    cand_y = vec > thresh_val
+            #    if cand_y.var() == 0: #cheap way to see if cand_y is constant
+            #        continue
+            #    cand_ncutval = Ncut(np.diag(diag),aff_mat,cand_y)
+            #    print("Ncut = ", cand_ncutval,  "greater : ", len(cand_y.nonzero()[0]))
+            #    if ncutval is None or cand_ncutval < ncutval:
+            #        ncutval = cand_ncutval
+            #        isinleftcluster = cand_y
+            #        #y = cand_y
             touchA,touchB = (0,0)
             for k,label in np.ndenumerate(isinleftcluster):
                 k = k[0]
                 if label:
                     lpatches_idx.append(cur.patches_idx[k])
-                    #leftrep += vec[k]*self.patches[cur.patches_idx[k]]
+                    leftrep += vec[k]*self.patches[cur.patches_idx[k]]
                     #leftrep += self.patches[k]
-                    leftrep += self.patches[cur.patches_idx[k]]
+                    #leftrep += self.patches[cur.patches_idx[k]]
                     touchA += 1
                 else:
                     rpatches_idx.append(cur.patches_idx[k])
-                    #rightrep += vec[k]*self.patches[cur.patches_idx[k]]
+                    rightrep += vec[k]*self.patches[cur.patches_idx[k]]
                     #rightrep += self.patches[k]
-                    rightrep += self.patches[cur.patches_idx[k]]
+                    #rightrep += self.patches[cur.patches_idx[k]]
                     touchB += 1
                 #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
                 #    ipdb.set_trace()
@@ -681,7 +687,7 @@ class ocdict():
             #print(np.linalg.norm(leftcentroid.matrix - leftrep.matrix),np.linalg.norm(rightcentroid.matrix - rightrep.matrix))
             #if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minvar > 1e-7:
             #if len(lpatches_idx) > 0 and len(rpatches_idx)> 0 and minspread > 1e-7:
-            ncutval = Ncut(np.diag(diag),aff_mat,y)
+            ncutval = Ncut(np.diag(diag),aff_mat,isinleftcluster)
             print("Ncut = ", ncutval)
             #ipdb.set_trace()
             if ncutval > epsilon:
@@ -689,7 +695,7 @@ class ocdict():
                 rnode = Node(rpatches_idx,cur,rightrep,False)
                 cur.children = (lnode,rnode)
                 depth = max((depth,lnode.depth,rnode.depth))
-                self.egvecs.append((depth,vec,y))
+                self.egvecs.append((depth,vec,isinleftcluster))
                 curdict = leftrep - rightrep
                 #norm = np.linalg.norm(curdict.feature_matrix)
                 #if norm < 1.e-3:
