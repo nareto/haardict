@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import twoDdict
 import sys
 
-def main(ocdict,imgpath,sparsity=5,plot=True):
+def main(ocdict,imgpath,sparsity=5,plot=True,retimg=False):
 
     clip = False
     twodpca = None
@@ -47,6 +47,8 @@ def main(ocdict,imgpath,sparsity=5,plot=True):
         #ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
         #fig.show()
         plt.show()
+    if retimg:
+        return(out)
 
 if __name__ == '__main__':
     main(twoDdict.ocdict(filepath=sys.argv[1]),sys.argv[2])

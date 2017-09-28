@@ -14,9 +14,10 @@ from sklearn.cluster import KMeans
 from sklearn.cluster import SpectralClustering
 from sklearn.cluster import ward_tree
 from sklearn.neighbors import kneighbors_graph
-from oct2py import octave
+import oct2py
 import gc
 import queue
+import pywt
 
 _METHODS_ = ['2ddict-2means','2ddict-spectral','ksvd']
 
@@ -70,13 +71,21 @@ def psnr(img1,img2):
 
 def HaarPSI(img1,img2):
     """Computes HaarPSI of img1 vs. img2. Requires file HaarPSI.m to be present in working directory"""
-    from oct2py import octave
+    #from oct2py import octave
     img1 = img1.astype('float64')
     img2 = img2.astype('float64')
-    octave.eval('pkg load image')
+    #octave.eval('pkg load image')
     haarpsi = octave.HaarPSI(img1,img2)
     return(haarpsi)
 
+def vecHaarPSI(arr1,arr2,shape=(8,8)):
+    #from oct2py import octave
+    #octave.eval('pkg load image')
+    oc = oct2py.Oct2Py()
+    haarpsi = oc.HaarPSI(arr1.reshape(shape),arr2.reshape(shape))
+    #print(haarpsi)
+    #ipdb.set_trace()
+    return(haarpsi)
 
 def affinity_matrix(X,sigma=1,threshold=0.5):
     """Computes affinity matrix of the distance-weighted graph built from X's rows"""
@@ -106,6 +115,34 @@ def centroid(values):
         centroid += val
     centroid /= len(values)
     return(centroid)
+
+def pywt2array(coeffs):
+    levels = len(coeffs) - 1
+    baseexp = int(np.log2(coeffs[0].shape[0]))
+    tot_length = int(4**baseexp + sum([3*4**(baseexp+i) for i in range(levels)]))
+    out = np.zeros(tot_length)
+    out[:4**baseexp] = coeffs[0].flatten()
+    offset = 4**baseexp
+    for lev,details in enumerate(coeffs[1:]):
+        dh,dv,dd = details
+        length = 4**(baseexp+lev)
+        for d in details:
+            out[offset:offset+length] = d.flatten()
+            offset += length
+    return(out)
+
+def array2pywt(array,levels):
+    baseexp = int(np.log2(array.size)/2)
+    l = baseexp-levels
+    out = [array[:4**l].reshape(2**l,2**l)]
+    offset = 4**(baseexp-levels)
+    for l in range(baseexp-levels,baseexp):
+        shape = (2**l,2**l)
+        size = shape[0]**2
+        out.append((array[offset:offset+size].reshape(shape),\
+                    array[offset+size:offset+2*size].reshape(shape),\
+                    array[offset+2*size:offset+3*size].reshape(shape)))
+    return(out)
 
 def twomeansval(values,k):
     """Computes value of 1D 2-means minimizer function for clusters values[:k] and values[k:]"""
@@ -191,7 +228,7 @@ def covariance_matrix(patches):
     ret /= len(patches)
     return(ret)
 
-def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
+def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**other_args):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -217,11 +254,13 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
     patches = []
     for i in images:
         patches += [Patch(p) for p in extract_patches(i)]
-    twodpca_instance = twodpca(patches,l,r)
-    twodpca_instance.compute_simple_bilateral_2dpca()
 
-    for p in patches:
-        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
+        twodpca_instance = None
+    if not clusteronpatches:
+        twodpca_instance = twodpca(patches,l,r)
+        twodpca_instance.compute_simple_bilateral_2dpca()
+        for p in patches:
+            p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
     if method[:6] == '2ddict':
@@ -230,9 +269,9 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',**other_args):
         except KeyError:
             cluster_epsilon = 1e-2
     if method == '2ddict-2means':
-        ocd.twomeans_cluster(epsilon=cluster_epsilon)
+        ocd.twomeans_cluster(clusteronpatches=clusteronpatches,epsilon=cluster_epsilon)
     elif method == '2ddict-spectral':
-        ocd.spectral_cluster(epsilon=cluster_epsilon)
+        ocd.spectral_cluster(epsilon=cluster_epsilon,clusteronpatches=clusteronpatches)
     #elif method == '2ddcit-ward':
     #    ocd.ward_cluster()
     elif method == 'ksvd':
@@ -489,14 +528,14 @@ class ocdict():
             next_tovisit = []
             
         self.dictelements = dictelements
+        self.ndictelements = len(dictelements)
         self.clustered = True
         self.compute_cluster_centroids()
         return(self.dictelements)
             
-    def twomeans_cluster(self,epsilon,minpatches=5,pca=False):
+    def twomeans_cluster(self,epsilon,minpatches=5,clusteronpatches=False):
         """Clusters data using recursive 2-means and creates Haar-dictionary"""
         
-        clusteronpatches = False
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -506,9 +545,7 @@ class ocdict():
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        if pca:
-            data_matrix = np.vstack([p.feature_vector for p in self.patches]) 
-        elif clusteronpatches:
+        if clusteronpatches:
             data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
             data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
@@ -534,7 +571,7 @@ class ocdict():
                     centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     #centroid1 /= np.linalg.norm(centroid1.matrix)
-                    #centroid2 /= np.linalg.norm(centroid2.matrix)
+                    #centroid2 /= np.linalg.norm(centroid2.lmatrix)
                     centroid1 /= len(lpatches_idx)
                     centroid2 /= len(rpatches_idx)
                     lnode = Node(lpatches_idx,cur,centroid1,True)
@@ -547,7 +584,8 @@ class ocdict():
                     depth = max((depth,lnode.depth,rnode.depth))
                     curdict = centroid1 - centroid2
                     curdict.matrix /= np.linalg.norm(curdict.matrix)
-                    curdict.feature_matrix /= np.linalg.norm(curdict.feature_matrix)
+                    if curdict.feature_matrix is not None:
+                        curdict.feature_matrix /= np.linalg.norm(curdict.feature_matrix)
                     #norm = np.linalg.norm(curdict.feature_matrix)
                     #if norm < 1.e-3:
                     #    ipdb.set_trace()
@@ -555,17 +593,16 @@ class ocdict():
             if cur.children is None:
                 self.leafs.append(cur)
         self.dictelements = dictelements
+        self.ndictelements = len(dictelements)
         self.tree_depth = depth
         self.clustered = True
         self.compute_cluster_centroids()
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         return(self.dictelements)
 
-    def spectral_cluster(self,epsilon,minpatches=5):
-        """Clusters data using recursive spectral clustering and creates Haar-dictionary"""
+    def twomeans_haar_cluster(self,epsilon,minpatches=5,clusteronpatches=False):
+        """Clusters data using recursive 2-means and creates Haar-dictionary"""
 
-        
-        clusteronpatches = False
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -574,28 +611,101 @@ class ocdict():
         cur_nodes = set()
         prev_nodes = set()
         prev_nodes.add(self)
-        #data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-        #data_matrix = np.vstack([(p.feature_matrix/np.linalg.norm(p.feature_matrix)).flatten() for p in self.patches])
-        data_matrix = np.vstack([(p.matrix/np.linalg.norm(p.matrix)).flatten() for p in self.patches])
-        #data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
+        depth = 0
+        if clusteronpatches:
+            data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
+        else:
+            data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+            #data_matrix = np.vstack([p.feature_matrix.flatten()/np.linalg.norm(p.feature_matrix.flatten()) for p in self.patches])
+        #deb = True
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            lpatches_idx = []
+            rpatches_idx = []
+            if cur.npatches > minpatches:
+                km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm...
+                if km.inertia_ > epsilon: #if km.inertia is still big, we branch on this node
+                    for k,label in enumerate(km.labels_):
+                        if label == 0:
+                            lpatches_idx.append(cur.patches_idx[k])
+                        if label == 1:
+                            rpatches_idx.append(cur.patches_idx[k])
+                    #if deb and (len(lpatches_idx) == 1 or len(rpatches_idx) == 1):
+                    #    ipdb.set_trace()
+                    #    deb = False
+                    #centroid1 = (1/len(lpatches_idx))*sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    #centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+                    centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+                    #centroid1 /= np.linalg.norm(centroid1.matrix)
+                    #centroid2 /= np.linalg.norm(centroid2.lmatrix)
+                    centroid1 /= len(lpatches_idx)
+                    centroid2 /= len(rpatches_idx)
+                    lnode = Node(lpatches_idx,cur,centroid1,True)
+                    rnode = Node(rpatches_idx,cur,centroid2,False)
+                    cur.children = (lnode,rnode)
+                    #tovisit.append(lnode)
+                    #tovisit.append(rnode)
+                    tovisit = [lnode] + tovisit
+                    tovisit = [rnode] + tovisit
+                    depth = max((depth,lnode.depth,rnode.depth))
+                    curdict = centroid1 - centroid2
+                    curdict.matrix /= np.linalg.norm(curdict.matrix)
+                    if curdict.feature_matrix is not None:
+                        curdict.feature_matrix /= np.linalg.norm(curdict.feature_matrix)
+                    #norm = np.linalg.norm(curdict.feature_matrix)
+                    #if norm < 1.e-3:
+                    #    ipdb.set_trace()
+                    dictelements += [curdict]
+            if cur.children is None:
+                self.leafs.append(cur)
+        self.dictelements = dictelements
+        self.ndictelements = len(dictelements)
+        self.tree_depth = depth
+        self.clustered = True
+        self.compute_cluster_centroids()
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        return(self.dictelements)
+    
+    def spectral_cluster(self,epsilon,clusteronpatches=False,minpatches=5):
+        """Clusters data using recursive spectral clustering and creates Haar-dictionary"""
+
+        
+        self.root_node = Node(tuple(np.arange(self.npatches)),None)
+        tovisit = []
+        tovisit.append(self.root_node)
+        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
+        self.leafs = []
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
         depth = 0
         nneighs = int(self.root_node.npatches/3)
         #affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        #affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
         beta = 10
         eps = 0
-        #dadj = affinity_matrix.todense()
-        #std1 = dadj[dadj.nonzero()].std()
-        #std = affinity_matrix.data.std()
-        std = 1
-        expaff_mat = np.zeros(shape=(self.npatches,self.npatches))
+        print('Computing affinity matrix...')
+        #expaff_mat = np.zeros(shape=(self.npatches,self.npatches))
+        expaff_mat = csr_matrix((self.npatches,self.npatches),dtype=np.float)
+        thresh = 0.6
+        if clusteronpatches:
+            data = [p.matrix for p in self.patches]
+        else:
+            data = [p.feature_matrix for p in self.patches]
         for i in range(self.npatches):
+            if i % 1000 == 0:
+                print(i,len(expaff_mat.data))
             for j in range(i):
-                dist = np.linalg.norm(self.patches[i].matrix - self.patches[j].matrix)
-                expdist = np.exp(-beta*dist/std) + eps
-                expaff_mat[i,j] = expdist
-                expaff_mat[j,i] = expdist
-        #affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
-        expaff_mat = 0.5*(expaff_mat + expaff_mat.transpose())
+                #dist = np.linalg.norm(data[i] - data[j])
+                #expdist = np.exp(-beta*dist) + eps
+                expdist = HaarPSI(data[i],data[j])
+                if expdist > thresh:
+                    #print('yep')
+                    expaff_mat[i,j] = expdist
+                #expaff_mat[j,i] = expdist
+        print('...done')
+        expaff_mat = expaff_mat + expaff_mat.transpose()
         self.egvecs = []
                 
         def Ncut(D,W,y):
@@ -607,17 +717,14 @@ class ocdict():
             cur = tovisit.pop()
             lpatches_idx = []
             rpatches_idx = []
-            #if cur.npatches > minpatches: #TODO: better stop criteria based on NCut value
-            #if cur == self.root_node or Ncut(diag,aff_mat,vec) > epsilon:
-            #cur_data = data_matrix[np.array(cur.patches_idx)]
-            #cur_data = data_matrix[cur.patches_idx,:]
             aff_mat = expaff_mat[cur.patches_idx,:][:,cur.patches_idx]
             diag = np.array([row.sum() for row in aff_mat[:,:]])
             diagsqrt = np.diag(diag**(-1/2))
             mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
             #print(depth, cur.npatches,aff_mat.shape)
-            egval,egvec = sslinalg.eigsh(mat,k=2,which='SA')
-            print("eigenvalues: ", egval)
+            print('Computing eigenvalues/vectors of %s matrix' % mat.shape)
+            egval,egvec = sslinalg.eigsh(mat,k=2,which='SM')
+            #print("eigenvalues: ", egval)
             vec = egvec[:,1] #second eigenvalue
             #return(aff_mat,diag,mat,vec)
             leftrep = Patch(np.zeros_like(self.patches[0].matrix))
@@ -630,11 +737,11 @@ class ocdict():
             #isinleftcluster = vec > mean
             isinleftcluster = vec > filters.threshold_otsu(vec)
             #ipdb.set_trace()
-            ncutval = None
-            thresh_vals = vec.copy()
-            thresh_vals.sort()
+            #ncutval = None
+            #thresh_vals = vec.copy()
+            #thresh_vals.sort()
             #for thresh_val in np.arange(vec.min(),vec.max(),(vec.max()-vec.min())/10):
-            step = int(len(vec)/10)
+            #step = int(len(vec)/10)
             #print("len vec = ", len(vec), "step = ", step)
             #for thresh_val in thresh_vals[-2::-step]:
             #for thresh_val in thresh_vals[::step]:
@@ -652,15 +759,13 @@ class ocdict():
                 k = k[0]
                 if label:
                     lpatches_idx.append(cur.patches_idx[k])
-                    leftrep += vec[k]*self.patches[cur.patches_idx[k]]
-                    #leftrep += self.patches[k]
-                    #leftrep += self.patches[cur.patches_idx[k]]
+                    #leftrep += vec[k]*self.patches[cur.patches_idx[k]]
+                    leftrep += self.patches[cur.patches_idx[k]]
                     touchA += 1
                 else:
                     rpatches_idx.append(cur.patches_idx[k])
-                    rightrep += vec[k]*self.patches[cur.patches_idx[k]]
-                    #rightrep += self.patches[k]
-                    #rightrep += self.patches[cur.patches_idx[k]]
+                    #rightrep += vec[k]*self.patches[cur.patches_idx[k]]
+                    rightrep += self.patches[cur.patches_idx[k]]
                     touchB += 1
                 #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
                 #    ipdb.set_trace()
@@ -710,6 +815,7 @@ class ocdict():
             if cur.children is None:
                 self.leafs.append(cur)
         self.dictelements = dictelements
+        self.ndictelements = len(dictelements)
         self.tree_depth = depth
         self.clustered = True
         self.compute_cluster_centroids()
@@ -825,7 +931,8 @@ class ocdict():
         rows,cols = self.patches[0].matrix.shape
         for j in range(K):
             self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
-
+        self.ndictelements = len(self.dictelements)
+        
     def ksvdbox_dict(self,dictsize,sparsity,iternum=5):
         """Computes dictionary using KSVD method. Requires ksvd.m file from ksvdbox13"""
 
@@ -845,7 +952,8 @@ class ocdict():
         rows,cols = self.patches[0].matrix.shape
         for j in range(dictsize):
             self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
-
+        self.ndictelements = len(self.dictelements)
+        
     def sparse_code(self,input_patch,sparsity):
         """Uses OMP to sparsely code input_patch with the dictionary"""
         
@@ -869,7 +977,7 @@ class ocdict():
         coef = omp.coef_
         return(coef,mean)
 
-    def sparse_code_tree(self,input_patch,distonpatches,sparsity=-1):
+    def sparse_code_tree(self,input_patch,distonpatches,sparsity=5):
         """:::NOT WORKING::: Visits the tree computing distances of input_patch to the centroids and uses these to sparsely code it"""
         
         #data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
@@ -944,7 +1052,7 @@ class ocdict():
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         for idx, a in np.ndenumerate(axis):
             a.set_axis_off()
-            a.imshow(self.delm_by_var[rows*idx[0] + idx[1]].matrix,interpolation='nearest')
+            a.imshow(self.delm_by_var[cols*idx[0] + idx[1]].matrix,interpolation='nearest')
         plt.show()
 
     def show_clusters(self,rows=10,cols=10,startingnode=None):
@@ -986,6 +1094,7 @@ class ocdict():
         return(clusters)
     
 class Node():
+    
     def __init__(self,patches_idx,parent,centroid=None,isleftchild=True):
         self.parent = parent
         if parent is None:
