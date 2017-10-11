@@ -19,7 +19,7 @@ import gc
 import queue
 import pywt
 
-_METHODS_ = ['2ddict-2means','2ddict-spectral','ksvd']
+_METHODS_ = ['2ddict-2means','2ddict-2means-haar','2ddict-spectral','ksvd']
 
 def read_raw_img(img,as_grey=True):
     import rawpy
@@ -71,11 +71,11 @@ def psnr(img1,img2):
 
 def HaarPSI(img1,img2):
     """Computes HaarPSI of img1 vs. img2. Requires file HaarPSI.m to be present in working directory"""
-    #from oct2py import octave
+    from oct2py import octave
     img1 = img1.astype('float64')
     img2 = img2.astype('float64')
-    #octave.eval('pkg load image')
-    haarpsi = octave.HaarPSI(img1,img2)
+    octave.eval('pkg load image')
+    haarpsi = octave.HaarPSI(255*img1,255*img2)
     return(haarpsi)
 
 def vecHaarPSI(arr1,arr2,shape=(8,8)):
@@ -142,6 +142,7 @@ def array2pywt(array,levels):
         out.append((array[offset:offset+size].reshape(shape),\
                     array[offset+size:offset+2*size].reshape(shape),\
                     array[offset+2*size:offset+3*size].reshape(shape)))
+        offset += 3*size
     return(out)
 
 def twomeansval(values,k):
@@ -270,6 +271,8 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**oth
             cluster_epsilon = 1e-2
     if method == '2ddict-2means':
         ocd.twomeans_cluster(clusteronpatches=clusteronpatches,epsilon=cluster_epsilon)
+    elif method == '2ddict-2means-haar':
+        ocd.twomeans_haar_cluster(epsilon=cluster_epsilon)
     elif method == '2ddict-spectral':
         ocd.spectral_cluster(epsilon=cluster_epsilon,clusteronpatches=clusteronpatches)
     #elif method == '2ddcit-ward':
@@ -279,6 +282,118 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**oth
     ocd._compute_matrix()
     ocd._normalize_matrix()
     return(twodpca_instance,ocd)
+
+def reconstruct(ocdict,imgpath,sparsity=5,plot=True,retimg=False):
+
+    clip = False
+    twodpca = None
+
+    psize = (ocdict.height,ocdict.width)
+    spars= sparsity
+
+    if imgpath[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+        img = skimage.io.imread(imgpath,as_grey=True)
+    elif imgpath[-3:].upper() in  ['NPY']:
+        img = np.load(imgpath)
+    elif imgpath[-4:].upper() == 'TIFF' or imgpath[-3:].upper() == 'CR2':
+        img = twoDdict.rescale(twoDdict.read_raw_img(imgpath))
+    patches = twoDdict.extract_patches(img,size=psize)
+    outpatches = []
+    coefsnonzeros = []
+    for p in patches:
+        patch = twoDdict.Patch(p)
+        coefs,mean = ocdict.sparse_code(patch,spars)
+        outpatches.append(ocdict.decode(coefs,mean))
+        coefsnonzeros.append(len(coefs.nonzero()[0]))
+
+    out = twoDdict.assemble_patches(outpatches,img.shape)
+    if clip:
+        out = twoDdict.clip(out)
+    hpi = twoDdict.HaarPSI(img,out)
+    print('HaarPSI = %f ' % hpi)
+    psnrval = twoDdict.psnr(img,out)
+    print('PSNR = %f  ' % psnrval)
+    twonorm = np.linalg.norm(img-out,ord=2)
+    print('2 norm = %f' % twonorm)
+    fronorm = np.linalg.norm(img-out,ord='fro')
+    print('Frobenius norm = %f' % fronorm)
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(1, 2)#, sharey=True)
+        #ax1.imshow(img[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+        #ax2.imshow(out[34:80,95:137], cmap=plt.cm.gray,interpolation='none')
+        ax1.imshow(img, cmap=plt.cm.gray,interpolation='none')
+        ax2.imshow(out, cmap=plt.cm.gray,interpolation='none')
+        #ax3.imshow(outclip, cmap=plt.cm.gray,interpolation='none')
+        #fig.show()
+        plt.show()
+    if retimg:
+        return(out)
+
+
+def allhaar(limg,rimg,ocd=None,cluster_epsilon=2,sparsity=2):
+
+    if limg[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+        img1 = skimage.io.imread(limg,as_grey=True)
+    elif limg[-3:].upper() in  ['NPY']:
+        img1 = np.load(limg)
+
+    if limg[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+        img2 = skimage.io.imread(limg,as_grey=True)
+    elif limg[-3:].upper() in  ['NPY']:
+        img2 = np.load(limg)
+
+    if ocd is None:
+        print('learning')
+        patches1 = [Patch(p) for p in extract_patches(img1)]
+        ocd = ocdict(patches1)
+        ocd.twomeans_haar_cluster(epsilon=cluster_epsilon)
+        print('computing stuff')
+        ocd.normalized_matrix = np.zeros((64,ocd.ndictelements))
+        for i,d in enumerate(ocd.dictelements):
+            vec = pywt2array(pywt.wavedec2(d.matrix,'haar','periodic',3))
+            #vec = d.matrix.flatten()
+            vec -= vec.mean()
+            ocd.normalized_matrix[:,i] = vec/np.linalg.norm(vec)
+            #ocd.normalized_matrix[:,i] = vec
+    ocd.matrix_computed = True
+    
+    print('reconstructing')
+    npatches = 200
+    patches2 = [Patch(p) for p in extract_patches(img2)][:npatches]
+    outpatches = []
+    coefsnonzeros = []
+    for p in patches2:
+        p.orig_matrix = p.matrix
+        p.matrix = pywt2array(pywt.wavedec2(p.matrix,'haar','periodic',3)).reshape(8,8)
+        coefs,mean = ocd.sparse_code(p,sparsity)
+        #coefs,mean = ocd.sparse_code_ompext(p,sparsity,ompbox=False)
+        #ipdb.set_trace()
+        dec = ocd.decode(coefs,mean).flatten()
+        #dec = ocd.decode(coefs,mean).flatten().transpose()
+        #outpatches.append(dec.reshape(8,8))
+        outpatches.append(pywt.waverec2(array2pywt(dec,3),'haar','periodic'))
+        #outpatches.append(ocd.decode(coefs,mean))
+        coefsnonzeros.append(len(coefs.nonzero()[0]))
+    errors = []
+    print('computing errors')
+    for i in range(npatches):
+        inp,outp = patches2[i].orig_matrix,outpatches[i]
+        rout = rescale(outp,True)
+        rinp = rescale(inp,False,0,1,0,255)
+        errors.append(np.linalg.norm(inp-outp))
+        #errors.append(HaarPSI(rinp,rout))
+    plt.hist(errors)
+    plt.show()
+    #out = assemble_patches(outpatches,img2.shape)
+    #hpi = HaarPSI(img2,out)
+    #print('HaarPSI = %f ' % hpi)
+    #psnrval = psnr(img2,out)
+    #print('PSNR = %f  ' % psnrval)
+    #twonorm = np.linalg.norm(img2-out,ord=2)
+    #print('2 norm = %f' % twonorm)
+    #fronorm = np.linalg.norm(img2-out,ord='fro')
+    #print('Frobenius norm = %f' % fronorm)
+    return(ocd,patches2,outpatches,errors)
 
 class Patch():
     """Class representing a patch, i.e. small portion of an image"""
@@ -546,17 +661,17 @@ class ocdict():
         prev_nodes.add(self)
         depth = 0
         if clusteronpatches:
-            data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
+            self.cluster_data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
         else:
-            data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-            #data_matrix = np.vstack([p.feature_matrix.flatten()/np.linalg.norm(p.feature_matrix.flatten()) for p in self.patches])
+            self.cluster_data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+            #self.cluster_data_matrix = np.vstack([p.feature_matrix.flatten()/np.linalg.norm(p.feature_matrix.flatten()) for p in self.patches])
         #deb = True
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lpatches_idx = []
             rpatches_idx = []
             if cur.npatches > minpatches:
-                km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm...
+                km = KMeans(n_clusters=2).fit(self.cluster_data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm...
                 if km.inertia_ > epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):
                         if label == 0:
@@ -600,9 +715,12 @@ class ocdict():
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         return(self.dictelements)
 
-    def twomeans_haar_cluster(self,epsilon,minpatches=5,clusteronpatches=False):
-        """Clusters data using recursive 2-means and creates Haar-dictionary"""
+    def twomeans_haar_cluster(self,epsilon,levels=3,minpatches=5):
+        """Clusters data using recursive 2-means on Haar-transformed patches and creates Haar-dictionary"""
 
+        #lev = int(np.log2(self.patches[0].matrix.shape[0]))
+        for p in self.patches:
+            p.haar_arr = pywt2array(pywt.wavedec2(p.matrix,'haar','periodic',levels))
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -612,18 +730,14 @@ class ocdict():
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        if clusteronpatches:
-            data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
-        else:
-            data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-            #data_matrix = np.vstack([p.feature_matrix.flatten()/np.linalg.norm(p.feature_matrix.flatten()) for p in self.patches])
+        self.cluster_data_matrix = np.vstack([p.haar_arr for p in self.patches])
         #deb = True
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lpatches_idx = []
             rpatches_idx = []
             if cur.npatches > minpatches:
-                km = KMeans(n_clusters=2).fit(data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm...
+                km = KMeans(n_clusters=2).fit(self.cluster_data_matrix[np.array(cur.patches_idx)]) #TODO: add possibility to choose norm...
                 if km.inertia_ > epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):
                         if label == 0:
@@ -681,7 +795,7 @@ class ocdict():
         prev_nodes.add(self)
         depth = 0
         nneighs = int(self.root_node.npatches/3)
-        #affinity_matrix = kneighbors_graph(data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        #affinity_matrix = kneighbors_graph(self.cluster_data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
         #affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
         beta = 10
         eps = 0
@@ -829,8 +943,8 @@ class ocdict():
     #    dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
     #    self.leafs = []
     #
-    #    data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-    #    ward = ward_tree(data_matrix)
+    #    self.cluster_data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
+    #    ward = ward_tree(self.cluster_data_matrix)
     #    children = ward[0]
     #    self.root_node = Node(None,None)
     #    nodes = [None]*(children.max() + 2)
@@ -963,6 +1077,7 @@ class ocdict():
             self._compute_matrix()
         omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
         y = input_patch.matrix.flatten()
+        #mean = 0
         mean = np.mean(y)
         y -= mean
         #outnorm = np.linalg.norm(y)
@@ -977,53 +1092,31 @@ class ocdict():
         coef = omp.coef_
         return(coef,mean)
 
-    def sparse_code_tree(self,input_patch,distonpatches,sparsity=5):
-        """:::NOT WORKING::: Visits the tree computing distances of input_patch to the centroids and uses these to sparsely code it"""
-        
-        #data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
-        cur_node = self.root_node
-        next_node = None
-        point = input_patch
-        coef = np.zeros(len(self.dictelements))
-        point.matrix -= point.matrix.mean()
-        point.feature_matrix -= point.feature_matrix.mean()
-        centroids = []
-        while cur_node.children is not None:
-            centroids.append(cur_node.centroid)
-            left_dist = np.linalg.norm(point.matrix - cur_node.children[0].centroid.matrix)
-            right_dist = np.linalg.norm(point.matrix - cur_node.children[1].centroid.matrix)
-            left_dist_feat = np.linalg.norm(point.feature_matrix - cur_node.children[0].centroid.feature_matrix)
-            right_dist_feat = np.linalg.norm(point.feature_matrix - cur_node.children[1].centroid.feature_matrix)
-            if distonpatches:
-                ld = left_dist
-                rd = right_dist
-            else:
-                ld = left_dist_feat
-                rd = right_dist_feat
-            if ld < rd:
-                marker = 'L'
-                next_node = cur_node.children[0]
-                #print(left_dist,left_dist_feat)
-            else:
-                marker = 'R'
-                next_node = cur_node.children[1]
-                #print(right_dist,right_dist_feat)
-            print(marker+' left: %3f right %3f' % (left_dist,right_dist))
-            cur_node = next_node
-        #print(cur_node.depth)
-        #return(cur_node.centroid)
-        return(centroids)
+    def sparse_code_ompext(self,input_patch,sparsity,ompbox=True):
+        from oct2py import octave
+        if ompbox:
+            octave.addpath('ompbox')
 
-    #def haar_tree_decode(self):
-    #    tovisit = [self.root_node]
-    #    prev_centroid = self.dictelements[0]
-    #    decoded_centroid = [prev_centroid]
-    #    while tovisit: #WRONG CONDITION
-    #        cur_node = tovisit.pop()
-    #        tovisit = [cur_node.children[0],cur_node.children[1]]+ tovisit
-    #        decoded_centroid += [prev_centroid ]
-    #    #return(cur_node.centroid)
-    
+        if input_patch.matrix.shape != self.patches[0].matrix.shape:
+            raise Exception("Input patch is not of the correct size")
+        if not self.matrix_computed:
+            self._compute_matrix()
+            
+        y = input_patch.matrix.flatten()
+        mean = np.mean(y)
+        y -= mean
+        matrix = self.normalized_matrix
+        y = y.reshape(len(y),1)
+        y  = y.astype('float64')
+        matrix = matrix.astype('float64')
+        #coef = octave.omp(matrix,y,matrix.transpose().dot(matrix),sparsity).todense()
+        if ompbox:
+            coef = octave.omp(matrix,y,np.array([]),sparsity).todense()
+        else:
+            coef = octave.OMP(sparsity,y.transpose(),matrix).transpose()
+        return(coef,mean)
+
+
     
     def decode(self,coefs,mean):
         #for idx in coefs.nonzero()[0]:
@@ -1055,6 +1148,17 @@ class ocdict():
             a.imshow(self.delm_by_var[cols*idx[0] + idx[1]].matrix,interpolation='nearest')
         plt.show()
 
+    #def show_dict_from_haar_matrix(self,rows=10,cols=10):
+    #    levels = 3
+    #    self.haar_recovered_dictelements = [pywt.waverec2(array2pywt(col,levels),'haar','periodic') for col in self.normalized_matrix.transpose()]
+    #    self.delm_by_var = sorted(self.haar_recovered_dictelements,key=lambda x: np.var(x,axis=(0,1)),reverse=False)[:rows*cols]
+    #    fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+    #    for idx, a in np.ndenumerate(axis):
+    #        a.set_axis_off()
+    #        a.imshow(self.delm_by_var[cols*idx[0] + idx[1]],interpolation='nearest')
+    #    plt.show()
+
+        
     def show_clusters(self,rows=10,cols=10,startingnode=None):
         clusters = []
         if startingnode is None:
