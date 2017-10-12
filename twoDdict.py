@@ -20,6 +20,7 @@ import queue
 import pywt
 
 _METHODS_ = ['2ddict-2means','2ddict-2means-haar','2ddict-spectral','ksvd']
+_TRANSFORMS_ = ['2dpca','haarwav','harrwavpack','shearlets']
 
 def read_raw_img(img,as_grey=True):
     import rawpy
@@ -233,10 +234,11 @@ def test_learn_reconstruct():
     #LEARNING
     learnimgs = ['img/flowers_pool-rescale.npy']
     test_meths = ['2ddict-2means']
-    cluster_epsilons = [2]
+    transf = '2dpca'
+    cluster_epsilons = [1]
     instances = {}
     for meth,eps in zip(test_meths,cluster_epsilons):
-        instances[meth] = learn_dict(learnimgs,method=meth,cluster_epsilon=eps)
+        instances[meth] = learn_dict(learnimgs,method=meth,transform=transf,cluster_epsilon=eps)
     #RECONSTRUCT
     codeimg = 'img/flowers_pool-rescale.npy'
     sparsity = 2
@@ -244,7 +246,7 @@ def test_learn_reconstruct():
         twodpca,ocd = inst
         reconstruct(ocd,codeimg,sparsity,False,False)
         
-def learn_dict(paths,method='2ddict-2means',clusteronpatches=True,cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3):
+def learn_dict(paths,method='2ddict-2means',transform=None,cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -257,6 +259,8 @@ def learn_dict(paths,method='2ddict-2means',clusteronpatches=True,cluster_epsilo
      
     if method not in _METHODS_:
         raise Exception("'method' has to be on of %s" % _METHODS_)
+    if transform not in _TRANSFORMS_:
+        raise Exception("'transform' has to be on of %s" % _TRANSFORMS_)
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
@@ -267,15 +271,21 @@ def learn_dict(paths,method='2ddict-2means',clusteronpatches=True,cluster_epsilo
 
     patches = []
     for i in images:
-        patches += [Patch(p) for p in extract_patches(i)]
-
+        patches += [p for p in extract_patches(i)]
         twodpca_instance = None
-    if not clusteronpatches:
+    patches = tuple(patches)
+    #if not clusteronpatches:
+    #    twodpca_instance = twodpca(patches,twodpca_l,twodpca_r)
+    #    twodpca_instance.compute_simple_bilateral_2dpca()
+    #    for p in patches:
+    #        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
+    if transform == '2dpca':
         twodpca_instance = twodpca(patches,twodpca_l,twodpca_r)
         twodpca_instance.compute_simple_bilateral_2dpca()
-        for p in patches:
-            p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
-
+        data_to_cluster = tuple([twodpca_instance.compute_feature_matrix(p) for p in patches])
+    elif transform is None:
+        data_to_cluster = patches
+    
     ocd = ocdict(patches)
     if method == '2ddict-2means':
         ocd.twomeans_cluster(clusteronpatches=clusteronpatches,epsilon=cluster_epsilon)
@@ -310,8 +320,7 @@ def reconstruct(ocdict,imgpath,sparsity=5,plot=True,retimg=False):
     outpatches = []
     coefsnonzeros = []
     for p in patches:
-        patch = Patch(p)
-        coefs,mean = ocdict.sparse_code(patch,spars)
+        coefs,mean = ocdict.sparse_code(p,spars)
         outpatches.append(ocdict.decode(coefs,mean))
         coefsnonzeros.append(len(coefs.nonzero()[0]))
 
@@ -354,21 +363,21 @@ def allhaar(limg,rimg,ocd=None,cluster_epsilon=2,sparsity=2):
     levels = 2
     if ocd is None:
         print('learning')
-        patches1 = [Patch(p) for p in extract_patches(img1)]
+        patches1 = [p for p in extract_patches(img1)]
         ocd = ocdict(patches1)
         ocd.twomeans_haar_cluster(epsilon=cluster_epsilon)
         print('computing stuff')
         ocd.normalized_matrix = np.zeros((64,ocd.ndictelements))
         for i,d in enumerate(ocd.dictelements):
-            vec = pywt2array(pywt.wavedec2(d.matrix,'haar','periodic',levels))
-            #vec = d.matrix.flatten()
+            vec = pywt2array(pywt.wavedec2(d,'haar','periodic',levels))
+            #vec = d.flatten()
             vec -= vec.mean()
             ocd.normalized_matrix[:,i] = vec/np.linalg.norm(vec)
             #ocd.normalized_matrix[:,i] = vec
     ocd.matrix_computed = True
     print('learnt dict has %d elements' % ocd.ndictelements)
     print('reconstructing')
-    patches2 = [Patch(p) for p in extract_patches(img2)]
+    patches2 = [p for p in extract_patches(img2)]
     outpatches = []
     coefsnonzeros = []
     for p in patches2:
@@ -404,82 +413,6 @@ def allhaar(limg,rimg,ocd=None,cluster_epsilon=2,sparsity=2):
     print('Frobenius norm = %f' % fronorm)
     return(ocd,out)
 
-class Patch():
-    """Class representing a patch, i.e. small portion of an image"""
-    
-    def __init__(self,matrix):
-        self.matrix = matrix.astype('float64')
-        self.feature_matrix = None
-        self.feature_vector = None
-
-    def compute_feature_matrix(self,U,V):
-        """Given matrices U and V computed by 2DPCA, computes the feature matrix of the patch"""
-
-        self.feature_matrix = np.dot(np.dot(V.transpose(),self.matrix),U)
-
-    def compute_feature_vector(self,eigenvectors):
-        """Given matrix eigenvectors computed by PCA, vectorizes the patch and computes its feature vector"""
-        
-        length = self.matrix.flatten().shape[0]
-        self.feature_vector = np.dot(self.matrix.flatten().reshape(1,length),eigenvectors)
-        
-    def __add__(self,patch):
-        newmat = self.matrix + patch.matrix
-        p = Patch(newmat)
-        if self.feature_matrix is not None and patch.feature_matrix is not None:
-            p.feature_matrix = self.feature_matrix + patch.feature_matrix
-        if self.feature_vector is not None and patch.feature_vector is not None:
-            p.feature_vector = self.feature_vector + patch.feature_vector
-        return(p)
-
-    def __mul__(self,scalar):
-        newmat = scalar*self.matrix
-        p = Patch(newmat)
-        if self.feature_matrix is not None:
-            p.feature_matrix = scalar*self.feature_matrix
-        if self.feature_vector is not None:
-            p.feature_vector = scalar*self.feature_vector
-        return(p)
-        
-    def __rmul__(self,scalar):
-        return(self.__mul__(scalar))
-    
-    def __truediv__(self,scalar):
-        return(self.__mul__(1/scalar))
-
-    def __sub__(self,other):
-        return(self+((-1)*other))
-    
-    def show(self):
-        fig = plt.figure()
-        axis = fig.gca()
-        plt.imshow(self.matrix, cmap=plt.cm.gray,interpolation='none')
-        fig.show()
-
-#class pca():
-#    def __init__(self,patches=None,k=-1):
-#        self.k = k
-#        if patches is not None:
-#            self.patches = tuple(patches)
-#
-#    def save_pickle(self,filepath):
-#        f = open(filepath,'wb')
-#        pickle.dump(self.__dict__,f,3)
-#        f.close()
-#
-#    def load_pickle(self,filepath):
-#        f = open(filepath,'rb')
-#        tmpdict = pickle.load(f)
-#        f.close()
-#        self.__dict__.update(tmpdict)
-#
-#    def compute_pca(self):
-#        length = self.patches[0].matrix.flatten().shape[0]
-#        cov = covariance_matrix([x.matrix.flatten().reshape(length,1).transpose() for x in self.patches])
-#        self.eigenvalues,self.eigenvectors = sslinalg.eigsh(cov,self.k)
-#        
-#
-
 class twodpca():
     """Class representing an instance of the 2DPCA method"""
     
@@ -502,13 +435,13 @@ class twodpca():
         self.__dict__.update(tmpdict)
 
     def compute_horizzontal_2dpca(self):
-        cov = covariance_matrix([p.matrix for p in self.patches])
+        cov = covariance_matrix([p for p in self.patches])
         eigenvalues,U = sslinalg.eigs(cov,self.l)
         self.horizzontal_eigenvalues = eigenvalues
         self.U = U
         
     def compute_vertical_2dpca(self):
-        cov = covariance_matrix([p.matrix.transpose() for p in self.patches])
+        cov = covariance_matrix([p.transpose() for p in self.patches])
         eigenvalues,V = sslinalg.eigs(cov,self.r)
         self.vertical_eigenvalues = eigenvalues
         self.V = V
@@ -525,6 +458,12 @@ class twodpca():
             raise Exception('Bilateral 2dpca already computed')
         #TODO: implement
 
+    def compute_feature_matrix(self,patch):
+        """Computes the feature matrix of the patch"""
+
+        return(np.dot(np.dot(self.V.transpose(),patch),self.U))
+
+
         
 
 class ocdict():
@@ -535,7 +474,7 @@ class ocdict():
         if patches is not None:
             self.patches = tuple(patches) #original image patches
             self.npatches = len(patches)
-            self.shape = self.patches[0].matrix.shape
+            self.shape = self.patches[0].shape
             self.height,self.width = self.shape
         self.matrix_is_normalized = False
         self.feature_matrix_is_normalized = False
@@ -556,7 +495,7 @@ class ocdict():
         self.__dict__.update(tmpdict)
 
     def _compute_matrix(self):
-        self.matrix = np.vstack([x.matrix.flatten() for x in self.dictelements]).transpose()
+        self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
         self.matrix_computed = True
         self._normalize_matrix()
 
@@ -566,7 +505,7 @@ class ocdict():
         self.feature_matrix_computed = True
         
     def compute_cluster_centroids(self):
-        self.cluster_centroids  = [(1/c.npatches)*sum([self.patches[k].matrix for k in c.patches_idx]) for c in self.leafs]
+        self.cluster_centroids  = [(1/c.npatches)*sum([self.patches[k] for k in c.patches_idx]) for c in self.leafs]
 
     def _distance_from_cluster(self,random_cluster=False):
         #if not hasattr(self,'cluster_centroids'):
@@ -630,7 +569,7 @@ class ocdict():
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = [self.root_node]
         next_tovisit = []
-        dictelements = [sum([p.matrix for p in self.patches])]
+        dictelements = [sum([p for p in self.patches])]
         for l in range(levels):
             while len(tovisit) > 0 :
                 cur = tovisit.pop()
@@ -643,8 +582,8 @@ class ocdict():
                 child2 = Node(rindexes,cur)
                 next_tovisit.append(child1)
                 next_tovisit.append(child2)
-                centroid1 = sum([self.patches[i].matrix for i in lindexes])
-                centroid2 = sum([self.patches[i].matrix for i in rindexes])
+                centroid1 = sum([self.patches[i] for i in lindexes])
+                centroid2 = sum([self.patches[i] for i in rindexes])
                 curdict = centroid1/child1.npatches - centroid2/child2.npatches
                 dictelements += [curdict]
             self.leafs = next_tovisit
@@ -670,7 +609,7 @@ class ocdict():
         prev_nodes.add(self)
         depth = 0
         if clusteronpatches:
-            self.cluster_data_matrix = np.vstack([p.matrix.flatten() for p in self.patches])
+            self.cluster_data_matrix = np.vstack([p.flatten() for p in self.patches])
         else:
             self.cluster_data_matrix = np.vstack([p.feature_matrix.flatten() for p in self.patches])
             #self.cluster_data_matrix = np.vstack([p.feature_matrix.flatten()/np.linalg.norm(p.feature_matrix.flatten()) for p in self.patches])
@@ -694,7 +633,7 @@ class ocdict():
                     #centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-                    #centroid1 /= np.linalg.norm(centroid1.matrix)
+                    #centroid1 /= np.linalg.norm(centroid1)
                     #centroid2 /= np.linalg.norm(centroid2.lmatrix)
                     centroid1 /= len(lpatches_idx)
                     centroid2 /= len(rpatches_idx)
@@ -707,7 +646,7 @@ class ocdict():
                     tovisit = [rnode] + tovisit
                     depth = max((depth,lnode.depth,rnode.depth))
                     curdict = centroid1 - centroid2
-                    curdict.matrix /= np.linalg.norm(curdict.matrix)
+                    curdict /= np.linalg.norm(curdict)
                     if curdict.feature_matrix is not None:
                         curdict.feature_matrix /= np.linalg.norm(curdict.feature_matrix)
                     #norm = np.linalg.norm(curdict.feature_matrix)
@@ -727,9 +666,9 @@ class ocdict():
     def twomeans_haar_cluster(self,epsilon,levels=3,minpatches=5):
         """Clusters data using recursive 2-means on Haar-transformed patches and creates Haar-dictionary"""
 
-        #lev = int(np.log2(self.patches[0].matrix.shape[0]))
+        #lev = int(np.log2(self.patches[0].shape[0]))
         for p in self.patches:
-            p.haar_arr = pywt2array(pywt.wavedec2(p.matrix,'haar','periodic',levels))
+            p.haar_arr = pywt2array(pywt.wavedec2(p,'haar','periodic',levels))
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -760,7 +699,7 @@ class ocdict():
                     #centroid2 = (1/len(rpatches_idx))*sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
                     centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
                     centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-                    #centroid1 /= np.linalg.norm(centroid1.matrix)
+                    #centroid1 /= np.linalg.norm(centroid1)
                     #centroid2 /= np.linalg.norm(centroid2.lmatrix)
                     centroid1 /= len(lpatches_idx)
                     centroid2 /= len(rpatches_idx)
@@ -773,7 +712,7 @@ class ocdict():
                     tovisit = [rnode] + tovisit
                     depth = max((depth,lnode.depth,rnode.depth))
                     curdict = centroid1 - centroid2
-                    curdict.matrix /= np.linalg.norm(curdict.matrix)
+                    curdict /= np.linalg.norm(curdict)
                     if curdict.feature_matrix is not None:
                         curdict.feature_matrix /= np.linalg.norm(curdict.feature_matrix)
                     #norm = np.linalg.norm(curdict.feature_matrix)
@@ -813,7 +752,7 @@ class ocdict():
         expaff_mat = csr_matrix((self.npatches,self.npatches),dtype=np.float)
         thresh = 0.6
         if clusteronpatches:
-            data = [p.matrix for p in self.patches]
+            data = [p for p in self.patches]
         else:
             data = [p.feature_matrix for p in self.patches]
         for i in range(self.npatches):
@@ -850,9 +789,9 @@ class ocdict():
             #print("eigenvalues: ", egval)
             vec = egvec[:,1] #second eigenvalue
             #return(aff_mat,diag,mat,vec)
-            leftrep = Patch(np.zeros_like(self.patches[0].matrix))
+            leftrep = np.zeros_like(self.patches[0])
             #leftrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
-            rightrep = Patch(np.zeros_like(self.patches[0].matrix))
+            rightrep = np.zeros_like(self.patches[0])
             #rightrep.feature_matrix = np.zeros_like(self.patches[0].feature_matrix)
             #simple mean thresholding:
             #mean = vec.mean()
@@ -892,13 +831,13 @@ class ocdict():
                     touchB += 1
                 #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
                 #    ipdb.set_trace()
-            leftrep.matrix /= np.linalg.norm(leftrep.matrix)
-            rightrep.matrix /= np.linalg.norm(rightrep.matrix)
+            leftrep /= np.linalg.norm(leftrep)
+            rightrep /= np.linalg.norm(rightrep)
             print("left and right cards: ", touchA,touchB)
             #leftrep.feature_matrix /= np.linalg.norm(leftrep.feature_matrix)
             #rightrep.feature_matrix /= np.linalg.norm(rightrep.feature_matrix)
-            leftvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in lpatches_idx]))
-            rightvar = np.trace(covariance_matrix([self.patches[i].matrix.transpose() for i in rpatches_idx]))
+            leftvar = np.trace(covariance_matrix([self.patches[i].transpose() for i in lpatches_idx]))
+            rightvar = np.trace(covariance_matrix([self.patches[i].transpose() for i in rpatches_idx]))
             minvar = min(leftvar,rightvar)
             print("left and rightvar: ", leftvar,rightvar)
 
@@ -1043,17 +982,17 @@ class ocdict():
                  'errorFlag': 0,
                  'numIteration': 10,
                  'preserveDCAtom': 1}
-        length = self.patches[0].matrix.flatten().shape[0]
-        Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
+        length = self.patches[0].flatten().shape[0]
+        Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
         #octave.addpath('../ksvd')
         octave.addpath('ksvd')
         D = octave.KSVD(Y,param)
         self.matrix = D
         self.matrix_computed = True
         self.dictelements = []
-        rows,cols = self.patches[0].matrix.shape
+        rows,cols = self.patches[0].shape
         for j in range(K):
-            self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
+            self.dictelements.append(D[:,j].reshape(rows,cols))
         self.ndictelements = len(self.dictelements)
         
     def ksvdbox_dict(self,dictsize,sparsity,iternum=5):
@@ -1061,8 +1000,8 @@ class ocdict():
 
         octave.addpath('ksvdbox/')
         #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
-        length = self.patches[0].matrix.flatten().shape[0]
-        Y = np.hstack([p.matrix.flatten().reshape(length,1) for p in self.patches])
+        length = self.patches[0].flatten().shape[0]
+        Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
         params = {'data': Y,
                  'Tdata': sparsity,
                  'dictsize': dictsize,
@@ -1072,20 +1011,20 @@ class ocdict():
         self.matrix = D
         self.matrix_computed = True
         self.dictelements = []
-        rows,cols = self.patches[0].matrix.shape
+        rows,cols = self.patches[0].shape
         for j in range(dictsize):
-            self.dictelements.append(Patch(D[:,j].reshape(rows,cols)))
+            self.dictelements.append(D[:,j].reshape(rows,cols))
         self.ndictelements = len(self.dictelements)
         
     def sparse_code(self,input_patch,sparsity):
         """Uses OMP to sparsely code input_patch with the dictionary"""
         
-        if input_patch.matrix.shape != self.patches[0].matrix.shape:
+        if input_patch.shape != self.patches[0].shape:
             raise Exception("Input patch is not of the correct size")
         if not self.matrix_computed:
             self._compute_matrix()
         omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
-        y = input_patch.matrix.flatten()
+        y = input_patch.flatten()
         #mean = 0
         mean = np.mean(y)
         y -= mean
@@ -1106,12 +1045,12 @@ class ocdict():
         if ompbox:
             octave.addpath('ompbox')
 
-        if input_patch.matrix.shape != self.patches[0].matrix.shape:
+        if input_patch.shape != self.patches[0].shape:
             raise Exception("Input patch is not of the correct size")
         if not self.matrix_computed:
             self._compute_matrix()
             
-        y = input_patch.matrix.flatten()
+        y = input_patch.flatten()
         mean = np.mean(y)
         y -= mean
         matrix = self.normalized_matrix
@@ -1130,7 +1069,7 @@ class ocdict():
     def decode(self,coefs,mean):
         #for idx in coefs.nonzero()[0]:
         #    out += coefs[idx]*self.normalized_matrix[:,idx].reshape(shape)
-        out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].matrix.shape)
+        out = (np.dot(self.normalized_matrix,coefs)).reshape(self.patches[0].shape)
         out += np.real(mean)
         return(out)
 
@@ -1150,11 +1089,11 @@ class ocdict():
         return(patches)
     
     def show_dict(self,rows=10,cols=10):
-        self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x.matrix,axis=(0,1)),reverse=False)[:rows*cols]
+        self.delm_by_var = sorted(self.dictelements,key=lambda x: np.var(x,axis=(0,1)),reverse=False)[:rows*cols]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         for idx, a in np.ndenumerate(axis):
             a.set_axis_off()
-            a.imshow(self.delm_by_var[cols*idx[0] + idx[1]].matrix,interpolation='nearest')
+            a.imshow(self.delm_by_var[cols*idx[0] + idx[1]],interpolation='nearest')
         plt.show()
 
     #def show_dict_from_haar_matrix(self,rows=10,cols=10):
@@ -1195,13 +1134,13 @@ class ocdict():
             for idx, a in np.ndenumerate(axis):
                 a.set_axis_off()
                 clust,string = clusters[rows*idx[0] + idx[1]]
-                a.imshow(clust.matrix,interpolation='nearest')
+                a.imshow(clust,interpolation='nearest')
                 a.text(0,0,string,color='red')
         else:
             for idx, a in np.ndenumerate(axis):
                 a.set_axis_off()
                 clust,string = clusters[idx[0]]
-                a.imshow(clust.matrix,interpolation='nearest')
+                a.imshow(clust,interpolation='nearest')
                 a.text(0,0,string,color='red')
         plt.show()
         return(clusters)
