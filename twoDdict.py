@@ -229,7 +229,22 @@ def covariance_matrix(patches):
     ret /= len(patches)
     return(ret)
 
-def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**other_args):
+def test_learn_reconstruct():
+    #LEARNING
+    learnimgs = ['img/flowers_pool-rescale.npy']
+    test_meths = ['2ddict-2means']
+    cluster_epsilons = [2]
+    instances = {}
+    for meth,eps in zip(test_meths,cluster_epsilons):
+        instances[meth] = learn_dict(learnimgs,method=meth,cluster_epsilon=eps)
+    #RECONSTRUCT
+    codeimg = 'img/flowers_pool-rescale.npy'
+    sparsity = 2
+    for meth,inst in instances.items():
+        twodpca,ocd = inst
+        reconstruct(ocd,codeimg,sparsity,False,False)
+        
+def learn_dict(paths,method='2ddict-2means',clusteronpatches=True,cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -242,15 +257,13 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**oth
      
     if method not in _METHODS_:
         raise Exception("'method' has to be on of %s" % _METHODS_)
-    elif method == 'ksvd' and ('dictsize' not in other_args.keys() or 'sparsity'  not in other_args.keys()):
-        raise Exception("KSVD method requires setting variables 'dictsize' and 'sparsity'")
     images = []
     for f in paths:
         if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
             images.append(skimage.io.imread(f,as_grey=True))
         elif f[-3:].upper() in  ['NPY']:
             images.append(np.load(f))
-    print('Learning from images: %s' % paths)
+    print('Learning from images: %s ....' % paths)
 
     patches = []
     for i in images:
@@ -258,17 +271,12 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**oth
 
         twodpca_instance = None
     if not clusteronpatches:
-        twodpca_instance = twodpca(patches,l,r)
+        twodpca_instance = twodpca(patches,twodpca_l,twodpca_r)
         twodpca_instance.compute_simple_bilateral_2dpca()
         for p in patches:
             p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
 
     ocd = ocdict(patches)
-    if method[:6] == '2ddict':
-        try:
-            cluster_epsilon = other_args['cluster_epsilon']
-        except KeyError:
-            cluster_epsilon = 1e-2
     if method == '2ddict-2means':
         ocd.twomeans_cluster(clusteronpatches=clusteronpatches,epsilon=cluster_epsilon)
     elif method == '2ddict-2means-haar':
@@ -278,9 +286,10 @@ def learn_dict(paths,l=3,r=3,method='2ddict-2means',clusteronpatches=False,**oth
     #elif method == '2ddcit-ward':
     #    ocd.ward_cluster()
     elif method == 'ksvd':
-        ocd.ksvdbox_dict(dictsize=other_args['dictsize'],sparsity=other_args['sparsity'])
+        ocd.ksvdbox_dict(dictsize=ksvddictsize,sparsity=ksvdsparsity)
     ocd._compute_matrix()
     ocd._normalize_matrix()
+    print('Learned dictionary with %d elements' % ocd.ndictelements)
     return(twodpca_instance,ocd)
 
 def reconstruct(ocdict,imgpath,sparsity=5,plot=True,retimg=False):
@@ -296,22 +305,22 @@ def reconstruct(ocdict,imgpath,sparsity=5,plot=True,retimg=False):
     elif imgpath[-3:].upper() in  ['NPY']:
         img = np.load(imgpath)
     elif imgpath[-4:].upper() == 'TIFF' or imgpath[-3:].upper() == 'CR2':
-        img = twoDdict.rescale(twoDdict.read_raw_img(imgpath))
-    patches = twoDdict.extract_patches(img,size=psize)
+        img = rescale(read_raw_img(imgpath))
+    patches = extract_patches(img,size=psize)
     outpatches = []
     coefsnonzeros = []
     for p in patches:
-        patch = twoDdict.Patch(p)
+        patch = Patch(p)
         coefs,mean = ocdict.sparse_code(patch,spars)
         outpatches.append(ocdict.decode(coefs,mean))
         coefsnonzeros.append(len(coefs.nonzero()[0]))
 
-    out = twoDdict.assemble_patches(outpatches,img.shape)
+    out = assemble_patches(outpatches,img.shape)
     if clip:
-        out = twoDdict.clip(out)
-    hpi = twoDdict.HaarPSI(img,out)
+        out = clip(out)
+    hpi = HaarPSI(img,out)
     print('HaarPSI = %f ' % hpi)
-    psnrval = twoDdict.psnr(img,out)
+    psnrval = psnr(img,out)
     print('PSNR = %f  ' % psnrval)
     twonorm = np.linalg.norm(img-out,ord=2)
     print('2 norm = %f' % twonorm)
@@ -342,6 +351,7 @@ def allhaar(limg,rimg,ocd=None,cluster_epsilon=2,sparsity=2):
     elif limg[-3:].upper() in  ['NPY']:
         img2 = np.load(limg)
 
+    levels = 2
     if ocd is None:
         print('learning')
         patches1 = [Patch(p) for p in extract_patches(img1)]
@@ -350,50 +360,49 @@ def allhaar(limg,rimg,ocd=None,cluster_epsilon=2,sparsity=2):
         print('computing stuff')
         ocd.normalized_matrix = np.zeros((64,ocd.ndictelements))
         for i,d in enumerate(ocd.dictelements):
-            vec = pywt2array(pywt.wavedec2(d.matrix,'haar','periodic',3))
+            vec = pywt2array(pywt.wavedec2(d.matrix,'haar','periodic',levels))
             #vec = d.matrix.flatten()
             vec -= vec.mean()
             ocd.normalized_matrix[:,i] = vec/np.linalg.norm(vec)
             #ocd.normalized_matrix[:,i] = vec
     ocd.matrix_computed = True
-    
+    print('learnt dict has %d elements' % ocd.ndictelements)
     print('reconstructing')
-    npatches = 200
-    patches2 = [Patch(p) for p in extract_patches(img2)][:npatches]
+    patches2 = [Patch(p) for p in extract_patches(img2)]
     outpatches = []
     coefsnonzeros = []
     for p in patches2:
         p.orig_matrix = p.matrix
-        p.matrix = pywt2array(pywt.wavedec2(p.matrix,'haar','periodic',3)).reshape(8,8)
+        p.matrix = pywt2array(pywt.wavedec2(p.matrix,'haar','periodic',levels)).reshape(8,8)
         coefs,mean = ocd.sparse_code(p,sparsity)
         #coefs,mean = ocd.sparse_code_ompext(p,sparsity,ompbox=False)
         #ipdb.set_trace()
         dec = ocd.decode(coefs,mean).flatten()
         #dec = ocd.decode(coefs,mean).flatten().transpose()
         #outpatches.append(dec.reshape(8,8))
-        outpatches.append(pywt.waverec2(array2pywt(dec,3),'haar','periodic'))
+        outpatches.append(pywt.waverec2(array2pywt(dec,levels),'haar','periodic'))
         #outpatches.append(ocd.decode(coefs,mean))
         coefsnonzeros.append(len(coefs.nonzero()[0]))
     errors = []
     print('computing errors')
-    for i in range(npatches):
-        inp,outp = patches2[i].orig_matrix,outpatches[i]
-        rout = rescale(outp,True)
-        rinp = rescale(inp,False,0,1,0,255)
-        errors.append(np.linalg.norm(inp-outp))
-        #errors.append(HaarPSI(rinp,rout))
-    plt.hist(errors)
-    plt.show()
-    #out = assemble_patches(outpatches,img2.shape)
-    #hpi = HaarPSI(img2,out)
-    #print('HaarPSI = %f ' % hpi)
-    #psnrval = psnr(img2,out)
-    #print('PSNR = %f  ' % psnrval)
-    #twonorm = np.linalg.norm(img2-out,ord=2)
-    #print('2 norm = %f' % twonorm)
-    #fronorm = np.linalg.norm(img2-out,ord='fro')
-    #print('Frobenius norm = %f' % fronorm)
-    return(ocd,patches2,outpatches,errors)
+    #for i in range(npatches):
+    #    inp,outp = patches2[i].orig_matrix,outpatches[i]
+    #    rout = rescale(outp,True)
+    #    rinp = rescale(inp,False,0,1,0,255)
+    #    errors.append(np.linalg.norm(inp-outp))
+    #    #errors.append(HaarPSI(rinp,rout))
+    #plt.hist(errors)
+    #plt.show()
+    out = assemble_patches(outpatches,img2.shape)
+    hpi = HaarPSI(img2,out)
+    print('HaarPSI = %f ' % hpi)
+    psnrval = psnr(img2,out)
+    print('PSNR = %f  ' % psnrval)
+    twonorm = np.linalg.norm(img2-out,ord=2)
+    print('2 norm = %f' % twonorm)
+    fronorm = np.linalg.norm(img2-out,ord='fro')
+    print('Frobenius norm = %f' % fronorm)
+    return(ocd,out)
 
 class Patch():
     """Class representing a patch, i.e. small portion of an image"""
