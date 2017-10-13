@@ -284,30 +284,29 @@ def learn_dict(paths,method='2ddict',clustering='2means',transform=None,cluster_
     #    twodpca_instance.compute_simple_bilateral_2dpca()
     #    for p in patches:
     #        p.compute_feature_matrix(twodpca_instance.U,twodpca_instance.V)
-    else:
-        #TRANSFORM
-        if transform == '2dpca':
-            transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
-        elif transform == 'wavelet':
-            transform_instance = wavelet_transform(patches,'haar')
-        elif transform is None:
-            transform_instance = dummy_transform()
-        data_to_cluster = transform_instance.transform(patches)
+    #TRANSFORM
+    if transform == '2dpca':
+        transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
+    elif transform == 'wavelet':
+        transform_instance = wavelet_transform(patches,'haar')
+    elif transform is None:
+        transform_instance = dummy_transform()
+    data_to_cluster = transform_instance.transform(patches)
 
-        #CLUSTER
-        if clustering == '2means':
-            cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
-        elif clustering == 'spectral':
-            cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon)
-        elif clustering is None:
-            cluster_instance = dummy_clustering()
-        cluster_instance.cluster()
-        
-        #BUILD DICT
-        if method == '2ddict':
-            dictionary = hierarchical_dict(cluster_instance)
-        elif method == 'ksvd':
-            dictionary = ksvd_dict(data_to_cluster,dictsize=ksvddictsize,sparsity=ksvdsparsity)
+    #CLUSTER
+    if clustering == '2means':
+        cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
+    elif clustering == 'spectral':
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon)
+    elif clustering is None:
+        cluster_instance = dummy_clustering()
+    cluster_instance.cluster()
+
+    #BUILD DICT
+    if method == '2ddict':
+        dictionary = hierarchical_dict(cluster_instance)
+    elif method == 'ksvd':
+        dictionary = ksvd_dict(data_to_cluster,dictsize=ksvddictsize,sparsity=ksvdsparsity)
         
     dictionary.compute()
     print('Learned dictionary with %d elements' % dictionary.ndictelements)
@@ -475,7 +474,7 @@ class dummy_clustering():
         pass
     
 class monkey_clustering():
-        """Randomly clusters the data. For testing purposes"""
+    """Randomly clusters the data. For testing purposes"""
         
     def cluster(self,levels=3):
         self.tree_depth = levels
@@ -506,7 +505,7 @@ class twomeans_clustering():
         self.npatches = len(patches)
         self.epsilon = epsilon
         self.minpatches = minpatches
-        self.cluster_matrix = np.vstack([p.flatten() for p in self.data])
+        self.cluster_matrix = np.vstack([p.flatten() for p in self.patches])
 
     def cluster(self):
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
@@ -661,14 +660,148 @@ class spectral_clustering():
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
 
-class hierarchical_dict():
-    def __init__(self,hierarchical_clustering,patch_list):
-        self.hclust = hierarchical_clustering
+class Cluster:
+    """Cluster of data"""
+
+    def __init__(self,data):
+        pass
+    
+    def show_clusters(self,rows=10,cols=10,startingnode=None):
+        clusters = []
+        if startingnode is None:
+            tovisit = [self.root_node]
+        else:
+            curn = self.root_node
+            for c in startingnode:
+                nextn = curn.children[int(c)]
+                curn = nextn
+            tovisit = [nextn]
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            centroid = sum([self.patches[i] for i in cur.patches_idx[1:]],self.patches[cur.patches_idx[0]])
+            #centroid = sum([self.patches[i] for i in cur.patches_idx])
+            if cur.idstr == '':
+                string = 'root'
+            else:
+                string = cur.idstr
+            clusters.append((centroid,string))
+            if cur.children is not None:
+                tovisit = [cur.children[0]] + tovisit
+                tovisit = [cur.children[1]] + tovisit
+        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+        if len(axis.shape) == 2:
+            for idx, a in np.ndenumerate(axis):
+                a.set_axis_off()
+                clust,string = clusters[rows*idx[0] + idx[1]]
+                a.imshow(clust,interpolation='nearest')
+                a.text(0,0,string,color='red')
+        else:
+            for idx, a in np.ndenumerate(axis):
+                a.set_axis_off()
+                clust,string = clusters[idx[0]]
+                a.imshow(clust,interpolation='nearest')
+                a.text(0,0,string,color='red')
+        plt.show()
+        return(clusters)
+
+        
+class Oc_Dict():
+    """Dictionary"""
+    def __init__(self,matrix):
+        self.matrix = matrix
+        self.shape = matrix.shape
+        self.atom_dim,self.cardinality = matrix.shape
+
+    def _matrix_from_patch_list(self,normalize=True):
+        self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
+        self._normalize_matrix()
+
+    def _normalize_matrix(self, norm_order=2):
+        """==  ============================  ==========================
+        ord    norm for matrices             norm for vectors
+        =====  ============================  ==========================
+        None   Frobenius norm                2-norm
+        'fro'  Frobenius norm                --
+        'nuc'  nuclear norm                  --
+        inf    max(sum(abs(x), axis=1))      max(abs(x))
+        -inf   min(sum(abs(x), axis=1))      min(abs(x))
+        0      --                            sum(x != 0)
+        1      max(sum(abs(x), axis=0))      as below
+        -1     min(sum(abs(x), axis=0))      as below
+        2      2-norm (largest sing. value)  as below
+        -2     smallest singular value       as below
+        other  --                            sum(abs(x)**ord)**(1./ord)
+        =====  ============================  ==========================
+        
+        The nuclear norm is the sum of the singular values."""
+        self.matrix = self.matrix - self.matrix.mean(axis=0)
+        ncols = self.matrix.shape[1]
+        self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
+        for j in range(ncols):
+            col = self.matrix[:,j]
+            norm = np.linalg.norm(col,ord=norm_order)
+            if norm != 0:
+                col /= norm
+                self.normalization_coefficients[j] = norm
+
+    def compute(self):
+        #self.compute_dictelements()
+        self._compute()
+        self._matrix_from_patch_list(self)
+
+    def mutual_coherence(self):
+        self.max_cor = 0
+        self.argmax_cor = None
+        ncols = self.matrix.shape[1]
+        for j1 in range(ncols):
+            for j2 in range(j1+1,ncols):
+                col1 = self.matrix[:,j1]
+                col2 = self.matrix[:,j2]
+                sp = np.dot(col1,col2)
+                sp /= np.linalg.norm(col1)*np.linalg.norm(col2)
+                if sp > self.max_cor:
+                    self.argmax_cor = (j1,j2)
+                    self.max_cor = sp
+        print('Maximum correlation: %f ---  columns %d and %d' % (self.max_cor,self.argmax_cor[0],self.argmax_cor[1]))
+        
+    def show_dict(self,shape=None,patch_shape=None):
+        if patch_shape is None:
+            s = int(np.sqrt(self.atom_dim))
+            patch_shape = (s,s)
+        if shape is None:
+            l = int(self.cardinality/10)
+            shape = (min(10,l),min(10,l))
+        rows,cols = shape
+        #if not hasattr(self,'atom_patches'):
+        if True:
+            self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
+        self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
+        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+        #for i,j in np.ndindex(rows,cols):
+        for idx,ax in np.ndenumerate(axis):
+            try:
+                i = idx[0]
+            except IndexError:
+                i = 0
+            try:
+                j = idx[1]
+            except IndexError:
+                j = 0                
+            ax.set_axis_off()
+            ax.imshow(self.atom_patches[cols*i + j],interpolation='nearest')
+        plt.show()
+
+        
+class hierarchical_dict(Oc_Dict):
+    def __init__(self,clustering,patch_list):
+        self.clustering = clustering
         self.patches = patch_list
         self.npatches = len(patch_list)
-
-    def compute(self,normalize=True):
-        root_node = self.hclust.root_node
+        self.compute()
+        Oc_Dict.__init__(self,self.matrix)
+        
+    def _compute(self,normalize=True):
+        root_node = self.clustering.root_node
         tovisit = [root_node]
         dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
         self.leafs = []
@@ -691,13 +824,15 @@ class hierarchical_dict():
             if normalize:
                 curdict /= np.linalg.norm(curdict)
             dictelements += [curdict]
-            tovisit = [lnode] + tovisit
-            tovisit = [rnode] + tovisit
+            if lnode.children is not None and rnode.children is not None:
+                tovisit = [lnode] + tovisit
+                tovisit = [rnode] + tovisit
 
         self.dictelements = dictelements
         self.ndictelements = len(dictelements)
+        
 
-class ksvd_dict():
+class ksvd_dict(Oc_Dict):
     """Computes dictionary using KSVD method."""
     
     def __init__(self,patch_list,dictsize,sparsity,maxiter=8,implementation='ksvdbox'):
@@ -707,9 +842,12 @@ class ksvd_dict():
         self.sparsity = sparsity
         self.maxiter = maxiter
         self.implementation = implementation
+        self.compute()
+        Oc_Dict.__init__(self,self.matrix)
 
     def _ksvd(self):
         """ Requires KSVD.m file"""
+        from oct2py import octave
         param = {'InitializationMethod': 'DataElements',
                  'K': self.dictsize,
                  'L': self.sparsity,
@@ -731,7 +869,7 @@ class ksvd_dict():
         
     def _ksvdbox(self):
         """Requires ksvdbox matlab package"""
-
+        from oct2py import octave
         octave.addpath('ksvdbox/')
         #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
         length = self.patches[0].flatten().shape[0]
@@ -745,11 +883,11 @@ class ksvd_dict():
         self.matrix = D
         self.dictelements = []
         rows,cols = self.patches[0].shape
-        for j in range(dictsize):
+        for j in range(self.dictsize):
             self.dictelements.append(D[:,j].reshape(rows,cols))
         self.ndictelements = len(self.dictelements)
 
-    def compute(self):
+    def _compute(self):
         if self.implementation == 'ksvdbox':
             self._ksvdbox()
         elif self.implementation == 'ksvd':
