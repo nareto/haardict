@@ -23,6 +23,23 @@ _METHODS_ = ['2ddict','ksvd']
 _CLUSTERINGS_ = ['2means','spectral']
 _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 
+def matrix2patches(matrix,shape=None):
+    """Returns list of arrays obtained from columns of matrix"""
+    m,n = matrix.shape
+    if shape is None:
+        size = int(np.sqrt(m))
+        shape = (size,size)
+    patches = []
+    for col in matrix.transpose():
+        patches.append(col.reshape(shape))
+    return(patches)
+
+def patches2matrix(patches):
+    """Returns matrix with columns given by flattened arrays in input"""
+    m = patches[0].size
+    matrix = np.hstack([p.reshape(m,1) for p in patches])
+    return(matrix)
+
 def read_raw_img(img,as_grey=True):
     import rawpy
     raw = rawpy.imread(img)
@@ -231,39 +248,11 @@ def covariance_matrix(patches):
     ret /= len(patches)
     return(ret)
 
-def orgmode_table_line(strings_or_n,breakline=False):
-    if not breakline:
-        out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
-    else:
-        out = '|'+(strings_or_n*'-|')
+def orgmode_table_line(strings_or_n):
+    out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
     return(out)
 
-def choose_transform(string):
-    if string == '2dpca':
-        transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
-    elif string == 'wavelet':
-        transform_instance = wavelet_transform(patches,'haar')
-    elif string is None:
-        transform_instance = dummy_transform(patches)
-    return(transform_instance)
-
-def choose_cluster(string):
-    if string is None or method != '2ddict':
-        cluster_instance = dummy_clustering(data_to_cluster)
-    elif string == '2means':
-        cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
-    elif string == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon)
-    return(cluster_instance)
-
-def choose_dict_method(string):
-    if string == '2ddict':
-        dictionary = hierarchical_dict(cluster_instance,patches)
-    elif string == 'ksvd':
-        dictionary = ksvd_dict(data_to_cluster,dictsize=ksvddictsize,sparsity=ksvdsparsity)
-    return(dictionary)
-
-def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3):
+def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -272,12 +261,14 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     	- ksvd: uses the KSVD method
     transform: whether to transform the data before applying the method:
     	- 2dpca: applies 2DPCA transform (see options: twodpca_l,twodpca_r)
-    	- wavelet: applies wavelet transform to patches (default: haar)
+    	- wavelet: applies wavelet transform to patches (default: haar) - see also wav_lev
     clustering: the clustering used (only for 2ddict method):
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
+    wav_lev: number of levels for the wavelet transform
+    dict_with_transformed_data: if True, the dictionary will be computed using the transformed data instead of the original patches
     """
      
     if method not in _METHODS_:
@@ -297,23 +288,39 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     patches = []
     for i in images:
         patches += [p for p in extract_patches(i)]
-        twodpca_instance = None
     patches = tuple(patches)
+    
     #TRANSFORM
-    transform_instance = choose_transform(transform)
+    if transform == '2dpca':
+        transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
+    elif transform == 'wavelet':
+        transform_instance = wavelet_transform(patches,wav_lev,'haar')
+    elif transform is None:
+        transform_instance = dummy_transform(patches)
     data_to_cluster = transform_instance.compute()
     
     #CLUSTER
-    cluster_instance = choose_cluster(clustering)
+    if clustering is None or method != '2ddict':
+        cluster_instance = dummy_clustering(data_to_cluster)
+    elif clustering == '2means':
+        cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
+    elif clustering == 'spectral':
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon)    
     cluster_instance.compute()
 
     #BUILD DICT
-    dictionary = choose_dict_method(method)
+    patches4dict = patches
+    if dict_with_transformed_data:
+        patches4dict = data_to_cluster
+    if method == '2ddict':
+        dictionary = hierarchical_dict(cluster_instance,patches4dict)
+    elif method == 'ksvd':
+        dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
     dictionary.compute()
     print('Learned dictionary with %d elements' % dictionary.cardinality)
     return(dictionary)
 
-def reconstruct(oc_dict,imgpath,sparsity=5,transform=None):
+def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3):
     clip = False
     psize = oc_dict.patches[0].shape
     spars= sparsity
@@ -325,11 +332,22 @@ def reconstruct(oc_dict,imgpath,sparsity=5,transform=None):
     elif imgpath[-4:].upper() == 'TIFF' or imgpath[-3:].upper() == 'CR2':
         img = rescale(read_raw_img(imgpath))
     patches = extract_patches(img,size=psize)
-    patches_as_columns = np.vstack([p.flatten() for p in patches]).transpose()
+
+    #TRANSFORM
+    if transform == '2dpca':
+        transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
+    elif transform == 'wavelet':
+        transform_instance = wavelet_transform(patches,wav_lev,'haar')
+    elif transform is None:
+        transform_instance = dummy_transform(patches)
+    data_to_reconstruct = transform_instance.compute()
+    
     outpatches = []
-    means,coefs = oc_dict.encode(patches_as_columns,spars)
-    rec_matrix = oc_dict.reconstruct(coefs,means)
-    reconstructed_patches = [p.reshape(psize) for p in rec_matrix.transpose()]
+    means,coefs = oc_dict.encode_patches(data_to_reconstruct,spars)
+    rec_patches = oc_dict.reconstruct_patches(coefs,means)
+    
+    #reconstructed_patches = [p.reshape(psize) for p in rec_matrix.transpose()]
+    reconstructed_patches = transform_instance.reverse(rec_patches)
     reconstructed = assemble_patches(reconstructed_patches,img.shape)
     if clip:
         reconstructed = clip(reconstructed)
@@ -347,14 +365,6 @@ class Saveable():
         f.close()
         self.__dict__.update(tmpdict)
     
-
-class Transform(Saveable):
-    def __init__(self,patch_list):
-        self.patch_list = patch_list
-        
-    def compute(self):
-        return(self._transform())
-
 class Node():
     def __init__(self,samples_idx,parent,isleftchild=True):
         self.parent = parent
@@ -378,7 +388,19 @@ class Node():
     #def samples_list(self,ocdict):
     #    return([ocdict.samples[i] for i in self.samples_idx])
 
+class Transform(Saveable):
+    """Transform for 2D data. Input: list of patches"""
+    def __init__(self,patch_list):
+        self.patch_list = patch_list
         
+    def compute(self):
+        """Computes the transform and returns a list of patches of the transformed data"""
+        return(self._transform())
+
+    def reverse(self,patches):
+        """Computes the transform and returns a list of patches of the transformed data"""
+        return(self._reverse_transform(patches))
+
 class Cluster(Saveable):
     """Hierarchical cluster of data"""
 
@@ -518,7 +540,7 @@ class Oc_Dict(Saveable):
     #    omp.fit(self.matrix,sample)
     #    return(omp._coef)        
 
-    def encode(self,samples,sparsity,center_samples=True):
+    def encode_samples(self,samples,sparsity,center_samples=True):
         if hasattr(self,'_encode'):
             self._encode(samples)
         else:
@@ -536,7 +558,10 @@ class Oc_Dict(Saveable):
             omp.fit(self.matrix,samples)
         return(means,omp.coef_)
 
-    def reconstruct(self,coefficients,means=None):
+    def encode_patches(self,patches,sparsity,center_samples=True):
+        return(self.encode_samples(patches2matrix(patches),sparsity,center_samples))
+        
+    def reconstruct_samples(self,coefficients,means=None):
         if hasattr(self,'_reconstruct'):
             self._reconstruct(coefficients,means)
         else:
@@ -546,6 +571,9 @@ class Oc_Dict(Saveable):
                     reconstructed[:,i] += m
         return(reconstructed)
 
+    def reconstruct_patches(self,coefficients,means=None):
+        return(matrix2patches(self.reconstruct_samples(coefficients,means)))
+    
     def encode_ompext(self,input_patch,sparsity,ompbox=True): #TODO: test method
         from oct2py import octave
         if ompbox:
@@ -578,8 +606,7 @@ class Oc_Dict(Saveable):
             l = int(self.cardinality/10)
             shape = (min(10,l),min(10,l))
         rows,cols = shape
-        #if not hasattr(self,'atom_patches'):
-        if True:
+        if not hasattr(self,'atom_patches'):
             self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
         self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
@@ -605,6 +632,9 @@ class dummy_transform(Transform):
 
     def _transform(self):
         return(self.patch_list)
+
+    def _reverse_transform(self,patches):
+        return(patches)
 
 class twodpca_transform(Transform):
     """Transform that computes 2DPCA and feature matrices """
@@ -651,6 +681,9 @@ class wavelet_transform(Transform):
                                           for p in self.patch_list])
         return(self.transformed_patches)
 
+    def _reverse_transform(self,patches):
+        return([pywt.waverec2(array2pywt(p.flatten(),self.levels),self.wavelet,'periodic') for p in patches])
+
 class dummy_clustering(Cluster):
     def _cluster(self):
         pass
@@ -689,7 +722,7 @@ class twomeans_clustering(Cluster):
         Cluster.__init__(self,samples)
         self.epsilon = epsilon
         self.minsamples = minsamples
-        self.cluster_matrix = np.vstack([p.flatten() for p in self.samples])
+        self.cluster_matrix = patches2matrix(self.samples).transpose()
 
     def _cluster(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
@@ -903,7 +936,8 @@ class ksvd_dict(Oc_Dict):
                  'numIteration': 10,
                  'preserveDCAtom': 1}
         length = self.patches[0].flatten().shape[0]
-        Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
+        #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
+        Y = patches2matrix(self.patches)
         #octave.addpath('../ksvd')
         octave.addpath('ksvd')
         D = octave.KSVD(Y,param)
@@ -919,7 +953,8 @@ class ksvd_dict(Oc_Dict):
         octave.addpath('ksvdbox/')
         #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
         length = self.patches[0].flatten().shape[0]
-        Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
+        #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
+        Y = patches2matrix(self.patches)
         params = {'data': Y,
                  'Tdata': self.sparsity,
                  'dictsize': self.dictsize,
