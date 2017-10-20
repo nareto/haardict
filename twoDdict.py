@@ -1,4 +1,5 @@
 import ipdb
+import itertools
 import pickle
 import os
 import matplotlib.pyplot as plt
@@ -22,6 +23,7 @@ import pywt
 _METHODS_ = ['2ddict','ksvd']
 _CLUSTERINGS_ = ['2means','spectral']
 _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
+WAVPACK_CHARS = 'adhv'
 
 def matrix2patches(matrix,shape=None):
     """Returns list of arrays obtained from columns of matrix"""
@@ -164,6 +166,24 @@ def array2pywt(array,levels):
         offset += 3*size
     return(out)
 
+def wavpack2array(wp):
+    values = []
+    for string in itertools.product(WAVPACK_CHARS,repeat=wp.maxlevel):
+        key = "".join(string)
+        val = wp[key].data
+        values.append(val)
+    return(np.array(values).flatten())
+
+def array2wavpack(array,wavelet,levels,mode='periodic'):
+    wp = pywt.WaveletPacket2D(None,wavelet,mode,maxlevel=levels)
+    i = 0
+    for string in itertools.product(WAVPACK_CHARS,repeat=wp.maxlevel):
+        key = "".join(string)
+        val = array[i].reshape(1,1)
+        wp[key] = val
+        i += 1
+    return(wp)
+
 def twomeansval(values,k):
     """Computes value of 1D 2-means minimizer function for clusters values[:k] and values[k:]"""
     
@@ -252,7 +272,7 @@ def orgmode_table_line(strings_or_n):
     out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
     return(out)
 
-def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False):
+def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -261,12 +281,14 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     	- ksvd: uses the KSVD method
     transform: whether to transform the data before applying the method:
     	- 2dpca: applies 2DPCA transform (see options: twodpca_l,twodpca_r)
-    	- wavelet: applies wavelet transform to patches (default: haar) - see also wav_lev
+    	- wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
+    	- wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
     clustering: the clustering used (only for 2ddict method):
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
+    wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
     wav_lev: number of levels for the wavelet transform
     dict_with_transformed_data: if True, the dictionary will be computed using the transformed data instead of the original patches
     """
@@ -294,7 +316,9 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     if transform == '2dpca':
         transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
     elif transform == 'wavelet':
-        transform_instance = wavelet_transform(patches,wav_lev,'haar')
+        transform_instance = wavelet_transform(patches,wav_lev,wavelet)
+    elif transform == 'wavelet_packet':
+        transform_instance = wavelet_packet(patches,wavelet)
     elif transform is None:
         transform_instance = dummy_transform(patches)
     data_to_cluster = transform_instance.compute()
@@ -320,7 +344,7 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     print('Learned dictionary with %d elements' % dictionary.cardinality)
     return(dictionary)
 
-def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3):
+def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3,wavelet='haar'):
     clip = False
     psize = oc_dict.patches[0].shape
     spars= sparsity
@@ -338,6 +362,8 @@ def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3):
         transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
     elif transform == 'wavelet':
         transform_instance = wavelet_transform(patches,wav_lev,'haar')
+    elif transform == 'wavelet_packet':
+        transform_instance = wavelet_packet(patches,wavelet)
     elif transform is None:
         transform_instance = dummy_transform(patches)
     data_to_reconstruct = transform_instance.compute()
@@ -681,9 +707,35 @@ class wavelet_transform(Transform):
                                           for p in self.patch_list])
         return(self.transformed_patches)
 
-    def _reverse_transform(self,patches):
-        return([pywt.waverec2(array2pywt(p.flatten(),self.levels),self.wavelet,'periodic') for p in patches])
+    def _reverse_transform(self,transf_patches=None):
+        if transf_patches is None:
+            transf_patches = self.transformed_patches
+        outp = [pywt.waverec2(array2pywt(p.flatten(),self.levels),self.wavelet,'periodic') for p in transf_patches]
+        return(outp)
 
+class wavelet_packet(Transform):
+    def __init__(self,patch_list,wavelet='haar'):
+        self.wavelet = wavelet
+        Transform.__init__(self,patch_list)
+        
+    def _transform(self):
+        outshape = self.patch_list[0].shape
+        outp = []
+        for p in self.patch_list:
+            wp = pywt.WaveletPacket2D(p,self.wavelet,'periodic')
+            outp.append(wavpack2array(wp).reshape(outshape))
+        self.levels = wp.maxlevel
+        self.transformed_patches = tuple(outp)
+        return(self.transformed_patches)
+
+    def _reverse_transform(self,transf_patches=None):
+        if transf_patches is None:
+            transf_patches = self.transformed_patches
+        outp = []
+        for p in transf_patches:
+            outp.append(array2wavpack(p.flatten(),self.wavelet,self.levels))
+        return(outp)
+    
 class dummy_clustering(Cluster):
     def _cluster(self):
         pass

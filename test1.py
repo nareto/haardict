@@ -6,16 +6,17 @@ plot = False
 learnimgs = ['img/flowers_pool-rescale.npy']
 codeimg = 'img/flowers_pool-rescale.npy'
 sparsity = 2
-#meth = '2ddict'
-meth = 'ksvd'
+meth = '2ddict'
+#meth = 'ksvd'
 #test_meths = ['ksvd']
 clust = '2means'
 cluster_epsilon = 2
 #learn_transf = 'wavelet'
+learn_transf = 'wavelet_packet'
 #learn_transf = '2dpca'
-learn_transf = None
+#learn_transf = None
 rec_transf = None
-#rec_transf = 'wavelet'
+#rec_transf = 'wavelet_packet'
 ksvd_cardinality = 583
 
 ### LEARNING ###
