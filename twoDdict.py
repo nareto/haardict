@@ -272,6 +272,15 @@ def orgmode_table_line(strings_or_n):
     out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
     return(out)
 
+def np_or_img_to_array(path):
+    if path[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+        ret = skimage.io.imread(path,as_grey=True)
+    elif path[-3:].upper() in  ['NPY']:
+        ret = np.load(path)
+    elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
+        ret = rescale(read_raw_img(imgpath))
+    return(ret)
+
 def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
     """Learns dictionary based on the selected method. 
 
@@ -301,11 +310,7 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
         raise Exception("'transform' has to be on of %s" % _TRANSFORMS_)
     images = []
     for f in paths:
-        if f[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
-            images.append(skimage.io.imread(f,as_grey=True))
-        elif f[-3:].upper() in  ['NPY']:
-            images.append(np.load(f))
-    print('Learning from images: %s ....' % paths)
+        images.append(np_or_img_to_array(f))
 
     patches = []
     for i in images:
@@ -341,20 +346,13 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
     dictionary.compute()
-    print('Learned dictionary with %d elements' % dictionary.cardinality)
     return(dictionary)
 
 def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3,wavelet='haar'):
     clip = False
     psize = oc_dict.patches[0].shape
     spars= sparsity
-
-    if imgpath[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
-        img = skimage.io.imread(imgpath,as_grey=True)
-    elif imgpath[-3:].upper() in  ['NPY']:
-        img = np.load(imgpath)
-    elif imgpath[-4:].upper() == 'TIFF' or imgpath[-3:].upper() == 'CR2':
-        img = rescale(read_raw_img(imgpath))
+    img = np_or_img_to_array(imgpath)
     patches = extract_patches(img,size=psize)
 
     #TRANSFORM
@@ -733,7 +731,7 @@ class wavelet_packet(Transform):
             transf_patches = self.transformed_patches
         outp = []
         for p in transf_patches:
-            outp.append(array2wavpack(p.flatten(),self.wavelet,self.levels))
+            outp.append(array2wavpack(p.flatten(),self.wavelet,self.levels).reconstruct())
         return(outp)
     
 class dummy_clustering(Cluster):
@@ -811,12 +809,77 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,minsamples=5):
+    def __init__(self,samples,epsilon,minsamples=5,implementation='scikit'):
         Cluster.__init__(self,samples)
         self.epsilon = epsilon
         self.minsamples = minsamples
+        self.implementation = implementation
+        self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
     def _cluster(self):
+        if self.implementation == 'scikit':
+            self._cluster_scikit()
+        elif self.implementation == 'explicit':
+            self._cluster_explicit()
+        
+        
+    def _cluster_scikit(self):
+        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
+        tovisit = []
+        tovisit.append(self.root_node)
+        self.leafs = []
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
+        depth = 0
+        nneighs = int(self.nsamples/3)
+        beta = 5
+        eps = 0
+        print('Computing affinity matrix...')
+        #TODO: kneigbhors using custom distance!!
+        affinity_matrix = kneighbors_graph(self.cluster_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        affinity_matrix.data = np.exp(-beta*affinity_matrix.data**2) + eps
+        print('...done')
+
+        def WCSS(clust1_idx,clust2_idx):
+            samples1 = [self.samples[i] for i in clust1_idx]
+            samples2 = [self.samples[i] for i in clust2_idx]
+            cent1 = sum(samples1[1:],samples1[0])
+            cent2 = sum(samples2[1:],samples2[0])
+            wcss = 0
+            for s1,s2 in zip(samples1,samples2):
+                wcss += np.linalg.norm(s1-cent1)**2 + np.linalg.norm(s2-cent2)**2
+            return(wcss)
+        
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            lsamples_idx = []
+            rsamples_idx = []
+            if cur.nsamples > self.minsamples:
+                aff_mat = affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
+                clust = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='discretize')                
+                #clust = SpectralClustering(2,affinity='precomputed',eigen_solver='amg',assign_labels='discretize')
+                clust.fit(aff_mat)
+                for k,label in np.ndenumerate(clust.labels_):
+                    k = k[0]
+                    if label:
+                        lsamples_idx.append(cur.samples_idx[k])
+                    else:
+                        rsamples_idx.append(cur.samples_idx[k])
+                wcss = WCSS(lsamples_idx,rsamples_idx)
+                if wcss > self.epsilon:
+                    lnode = Node(lsamples_idx,cur,True)
+                    rnode = Node(rsamples_idx,cur,False)
+                    cur.children = (lnode,rnode)
+                    tovisit = [lnode] + tovisit
+                    tovisit = [rnode] + tovisit
+                    depth = max((depth,lnode.depth,rnode.depth))
+                if cur.children is None:
+                    self.leafs.append(cur)
+        self.tree_depth = depth
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+
+    def _cluster_explicit(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -956,7 +1019,11 @@ class hierarchical_dict(Oc_Dict):
             centroid2 /= len(rpatches_idx)
             curdict = centroid1 - centroid2
             if normalize:
-                curdict /= np.linalg.norm(curdict)
+                norm = np.linalg.norm(curdict)
+                if norm != 0:
+                    curdict /= norm
+            if np.isnan(curdict).any():
+                ipdb.set_trace()
             dictelements += [curdict]
             if lnode.children is not None:
                 tovisit = [lnode] + tovisit
