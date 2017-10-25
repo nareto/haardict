@@ -19,6 +19,10 @@ import oct2py
 import gc
 import queue
 import pywt
+from oct2py import octave
+octave.eval('pkg load image')
+oc = oct2py.Oct2Py()
+from haarpsi import haar_psi
 
 _METHODS_ = ['2ddict','ksvd']
 _CLUSTERINGS_ = ['2means','spectral']
@@ -92,17 +96,17 @@ def psnr(img1,img2):
 
 def HaarPSI(img1,img2):
     """Computes HaarPSI of img1 vs. img2. Requires file HaarPSI.m to be present in working directory"""
+    #if 'octpy2' not in dir():
     from oct2py import octave
+    octave.eval('pkg load image')
     img1 = img1.astype('float64')
     img2 = img2.astype('float64')
-    octave.eval('pkg load image')
-    haarpsi = octave.HaarPSI(255*img1,255*img2)
+    haarpsi = octave.HaarPSI(img1,img2,0)
     return(haarpsi)
 
 def vecHaarPSI(arr1,arr2,shape=(8,8)):
     #from oct2py import octave
     #octave.eval('pkg load image')
-    oc = oct2py.Oct2Py()
     haarpsi = oc.HaarPSI(arr1.reshape(shape),arr2.reshape(shape))
     #print(haarpsi)
     #ipdb.set_trace()
@@ -816,6 +820,41 @@ class spectral_clustering(Cluster):
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
+    def _compute_affinity_matrix(self,distance='haarpsi',threshold=0.6,beta=5,eps=0):
+        """ 'distance' can be 'euclidean' or 'haarpsi'"""
+
+        if distance == 'haarpsi':
+            #dist = lambda patch1,patch2: HaarPSI(patch1,patch2)
+            dist = lambda patch1,patch2: 1 - haar_psi(patch1,patch2)[0]
+        elif distance == 'euclidean':
+            dist = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
+            
+        print('Computing affinity matrix...')
+        data = []
+        indices = []
+        indptr = [0]
+        oldi = 0
+        cumrowlength = 0
+        for i,j in itertools.combinations(range(self.nsamples),2):
+            print('\r%d/%d' % (i+j,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
+            if i != oldi:
+                indptr.append(cumrowlength)
+                oldi = i
+            d = dist(self.samples[i], self.samples[j])
+            expd = np.exp(-beta*d) + eps
+            data.append(expd)
+            indices.append(j)
+            cumrowlength += 1
+        indptr.append(cumrowlength)
+        #artificially add last row of all zeroes
+        data.append(0)
+        indices.append(self.nsamples-1)
+        indptr.append(cumrowlength+1)
+        expaff_mat = csr_matrix((data,indices,indptr),shape=(self.nsamples,self.nsamples))
+        print('...done')
+        expaff_mat = expaff_mat + expaff_mat.transpose()
+        self.affinity_matrix = expaff_mat
+        
     def _cluster(self):
         if self.implementation == 'scikit':
             self._cluster_scikit()
@@ -832,15 +871,13 @@ class spectral_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        nneighs = int(self.nsamples/3)
-        beta = 5
-        eps = 0
-        print('Computing affinity matrix...')
-        #TODO: kneigbhors using custom distance!!
-        affinity_matrix = kneighbors_graph(self.cluster_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
-        affinity_matrix.data = np.exp(-beta*affinity_matrix.data**2) + eps
-        print('...done')
-
+        #nneighs = int(self.nsamples/3)
+        #print('Computing affinity matrix...')
+        ##TODO: kneigbhors using custom distance!!
+        #affinity_matrix = kneighbors_graph(self.cluster_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        #affinity_matrix.data = np.exp(-beta*affinity_matrix.data**2) + eps
+        #print('...done')
+        self._compute_affinity_matrix('haarpsi')
         def WCSS(clust1_idx,clust2_idx):
             samples1 = [self.samples[i] for i in clust1_idx]
             samples2 = [self.samples[i] for i in clust2_idx]
@@ -856,8 +893,11 @@ class spectral_clustering(Cluster):
             lsamples_idx = []
             rsamples_idx = []
             if cur.nsamples > self.minsamples:
-                aff_mat = affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
-                clust = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='discretize')                
+                aff_mat = self.affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
+                if (aff_mat == 0).todense().all():
+                    continue
+                #clust = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='discretize')
+                clust = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='kmeans')                
                 #clust = SpectralClustering(2,affinity='precomputed',eigen_solver='amg',assign_labels='discretize')
                 clust.fit(aff_mat)
                 for k,label in np.ndenumerate(clust.labels_):
@@ -889,8 +929,8 @@ class spectral_clustering(Cluster):
         prev_nodes.add(self)
         depth = 0
         nneighs = int(self.nsamples/3)
-        #affinity_matrix = kneighbors_graph(self.cluster_data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
-        #affinity_matrix.data = np.exp(-beta*affinity_matrix.data/std) + eps
+        #self.affinity_matrix = kneighbors_graph(self.cluster_data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
+        #self.affinity_matrix.data = np.exp(-beta*self.affinity_matrix.data/std) + eps
         beta = 10
         eps = 0
         print('Computing affinity matrix...')
@@ -1041,12 +1081,20 @@ class ksvd_dict(Oc_Dict):
         self.sparsity = sparsity
         self.maxiter = maxiter
         self.implementation = implementation
+        from oct2py import octave
+        octave.addpath('ksvd')
+        octave.addpath('ksvdbox/')
+        #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
+        self.octave = octave
+        #import oct2py
+        #self.oc = oct2py.Oct2Py
+        #self.oc.eval('addpath ksvdbox')
         self.compute()
         Oc_Dict.__init__(self,self.matrix)
 
     def _ksvd(self):
         """ Requires KSVD.m file"""
-        from oct2py import octave
+        #from oct2py import octave
         param = {'InitializationMethod': 'DataElements',
                  'K': self.dictsize,
                  'L': self.sparsity,
@@ -1056,9 +1104,9 @@ class ksvd_dict(Oc_Dict):
                  'preserveDCAtom': 1}
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
+        #octave.addpath('ksvd')
         Y = patches2matrix(self.patches)
         #octave.addpath('../ksvd')
-        octave.addpath('ksvd')
         D = octave.KSVD(Y,param)
         self.matrix = D
         self.dictelements = []
@@ -1068,9 +1116,6 @@ class ksvd_dict(Oc_Dict):
         
     def _ksvdbox(self):
         """Requires ksvdbox matlab package"""
-        from oct2py import octave
-        octave.addpath('ksvdbox/')
-        #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
         Y = patches2matrix(self.patches)
@@ -1078,7 +1123,8 @@ class ksvd_dict(Oc_Dict):
                  'Tdata': self.sparsity,
                  'dictsize': self.dictsize,
                  'memusage': 'normal'} #'low','normal' or 'high'
-        [D,X] = octave.ksvd(params)
+        [D,X] = self.octave.ksvd(params)
+        #[D,X] = self.oc.eval('ksvdparams)
         self.encoding = X
         self.matrix = D
         self.dictelements = []
