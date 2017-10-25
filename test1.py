@@ -2,11 +2,16 @@ from twoDdict import *
 import numpy as np
 import matplotlib.pyplot as plt
 
+np.random.seed(123)
+    
 plot = False
 #learnimg = 'img/flowers_pool-rescale.npy'
 #codeimg = 'img/flowers_pool-rescale.npy'
 learnimg = 'img/flowers_pool-small.npy'
 codeimg = 'img/flowers_pool-small.npy'
+patch_size = (8,8)
+#npatches = None
+npatches = 50
 sparsity = 2
 meth = '2ddict'
 #meth = 'ksvd'
@@ -14,6 +19,7 @@ meth = '2ddict'
 #clust = '2means'
 clust = 'spectral'
 cluster_epsilon = 1.e0
+spectral_distance = 'emd'
 #cluster_epsilon = 10
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet_packet'
@@ -21,7 +27,7 @@ cluster_epsilon = 1.e0
 learn_transf = None
 rec_transf = None
 #rec_transf = 'wavelet_packet'
-ksvd_cardinality = 230
+ksvd_cardinality = 15
 
 ### LEARNING ###
 ksvd_sparsity = sparsity
@@ -30,18 +36,19 @@ reconstructed = {}
 dwtd = False
 if rec_transf is not None:
     dwtd = True
-dictionary = learn_dict([learnimg],method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,dict_with_transformed_data=dwtd)
+dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_distance=spectral_distance,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,dict_with_transformed_data=dwtd)
 
 ### RECONSTRUCT ###
-rec = rescale(reconstruct(dictionary,codeimg,sparsity,rec_transf))
-img = rescale(np.load(codeimg))
-hpi = HaarPSI(img,rec)
+rec = reconstruct(dictionary,codeimg,sparsity,rec_transf)
+rec = rescale(rec,True)
+img = np_or_img_to_array(codeimg,patch_size)
+hpi = haar_psi(img,rec)[0]
 psnrval = psnr(img,rec)
 twonorm = np.linalg.norm(img-rec,ord=2)
 #fronorm = np.linalg.norm(img-rec,ord='fro')
 
-print('\n\nLearn img: %s\nReconstruction img: %s\nLearning method: %s \n Learning Transform: %s\nClustering method: %s \nCluster epsilon: %f\nReconstruction Transform: %s\nDictionary cardinality: %d'
-      %(learnimg,codeimg,meth,learn_transf,clust,cluster_epsilon,rec_transf,dictionary.cardinality))
+print('\n\nLearn img: %s\nReconstruction img: %s\nLearning method: %s \n Learning Transform: %s\nClustering method: %s \nCluster epsilon: %f\nSpectral distance: %s\nReconstruction Transform: %s\nDictionary cardinality: %d'
+      %(learnimg,codeimg,meth,learn_transf,clust,cluster_epsilon,spectral_distance,rec_transf,dictionary.cardinality))
 print(orgmode_table_line(['PSNR','HaarPSI']))
 print(orgmode_table_line([psnrval,hpi]))
 if plot:

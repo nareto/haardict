@@ -10,6 +10,7 @@ import skimage.io
 import skimage.color
 import skimage.filters as filters
 import scipy.sparse
+import pyemd
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
 from sklearn.cluster import SpectralClustering
@@ -22,6 +23,9 @@ import pywt
 from oct2py import octave
 octave.eval('pkg load image')
 oc = oct2py.Oct2Py()
+#octave.addpath('ksvd')
+octave.addpath('ksvdbox/')
+octave.addpath('ompbox/')
 from haarpsi import haar_psi
 
 _METHODS_ = ['2ddict','ksvd']
@@ -276,19 +280,25 @@ def orgmode_table_line(strings_or_n):
     out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
     return(out)
 
-def np_or_img_to_array(path):
+def np_or_img_to_array(path,crop_to_patchsize=None):
     if path[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
         ret = skimage.io.imread(path,as_grey=True)
     elif path[-3:].upper() in  ['NPY']:
         ret = np.load(path)
     elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
         ret = rescale(read_raw_img(imgpath))
-    return(ret)
+    if crop_to_patchsize is not None:
+        m,n = crop_to_patchsize
+        M,N = ret.shape
+        ret = ret[:M-(M%m),:N-(N%n)]
+    return(255*ret)
 
-def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_distance='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
+    npatches: if an int, only this number of patches (out of the complete set extracted from the learning images) will be used for learning
+    patch_size: size of the patches to be extracted
     method: the chosen method. The possible choices are:
     	- 2ddict: 2ddict procedure 
     	- ksvd: uses the KSVD method
@@ -300,12 +310,13 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
+    spectral_distance: distance used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
     wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
     wav_lev: number of levels for the wavelet transform
     dict_with_transformed_data: if True, the dictionary will be computed using the transformed data instead of the original patches
     """
-     
+
     if method not in _METHODS_:
         raise Exception("'method' has to be on of %s" % _METHODS_)
     if clustering not in _CLUSTERINGS_:
@@ -314,13 +325,15 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
         raise Exception("'transform' has to be on of %s" % _TRANSFORMS_)
     images = []
     for f in paths:
-        images.append(np_or_img_to_array(f))
+        images.append(np_or_img_to_array(f,patch_size))
 
     patches = []
     for i in images:
-        patches += [p for p in extract_patches(i)]
-    patches = tuple(patches)
-    
+        patches += [p for p in extract_patches(i,patch_size)]
+    patches = np.array(patches)
+    if npatches is not None:
+        patches = patches[np.random.permutation(range(len(patches)))[:npatches]]
+        
     #TRANSFORM
     if transform == '2dpca':
         transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
@@ -338,7 +351,7 @@ def learn_dict(paths,method='2ddict',transform=None,clustering='2means',cluster_
     elif clustering == '2means':
         cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
     elif clustering == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon)    
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,distance=spectral_distance)    
     cluster_instance.compute()
 
     #BUILD DICT
@@ -356,8 +369,8 @@ def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3,wavelet='haa
     clip = False
     psize = oc_dict.patches[0].shape
     spars= sparsity
-    img = np_or_img_to_array(imgpath)
-    patches = extract_patches(img,size=psize)
+    img = np_or_img_to_array(imgpath,psize)
+    patches = extract_patches(img,psize)
 
     #TRANSFORM
     if transform == '2dpca':
@@ -813,21 +826,38 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,minsamples=5,implementation='scikit'):
+    def __init__(self,samples,distance,epsilon,minsamples=5,implementation='scikit'):
+        """	samples: patches to cluster
+    		distance: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
+        	epsilon: threshold for WCSS used as criteria to branch on a tree node"""
+        
         Cluster.__init__(self,samples)
+        self.distance = distance
+        self.patch_size = self.samples[0].shape
         self.epsilon = epsilon
         self.minsamples = minsamples
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
     def _compute_affinity_matrix(self,distance='haarpsi',threshold=0.6,beta=5,eps=0):
-        """ 'distance' can be 'euclidean' or 'haarpsi'"""
 
         if distance == 'haarpsi':
             #dist = lambda patch1,patch2: HaarPSI(patch1,patch2)
             dist = lambda patch1,patch2: 1 - haar_psi(patch1,patch2)[0]
         elif distance == 'euclidean':
             dist = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
+        elif distance == 'emd':
+            prows,pcols = self.patch_size
+            histlength = prows*pcols
+            metric_matrix = np.zeros((histlength,histlength))
+            for i,j in itertools.combinations(range(histlength),2):
+                row1,col1 = int(i/pcols),i%pcols
+                row2,col2 = int(j/pcols),j%pcols
+                p1 = np.array([row1,col1])
+                p2 = np.array([row2,col2])
+                metric_matrix[i,j] = np.linalg.norm(p1-p2)
+            metric_matrix += metric_matrix.transpose()
+            dist  = lambda patch1,patch2: pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)
             
         print('Computing affinity matrix...')
         data = []
@@ -835,16 +865,19 @@ class spectral_clustering(Cluster):
         indptr = [0]
         oldi = 0
         cumrowlength = 0
+        counter = 0
         for i,j in itertools.combinations(range(self.nsamples),2):
-            print('\r%d/%d' % (i+j,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
+            print('\r%d/%d' % (counter + 1,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
             if i != oldi:
                 indptr.append(cumrowlength)
                 oldi = i
             d = dist(self.samples[i], self.samples[j])
             expd = np.exp(-beta*d) + eps
-            data.append(expd)
-            indices.append(j)
-            cumrowlength += 1
+            if expd > threshold:
+                data.append(expd)
+                indices.append(j)
+                cumrowlength += 1
+            counter += 1
         indptr.append(cumrowlength)
         #artificially add last row of all zeroes
         data.append(0)
@@ -877,7 +910,7 @@ class spectral_clustering(Cluster):
         #affinity_matrix = kneighbors_graph(self.cluster_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
         #affinity_matrix.data = np.exp(-beta*affinity_matrix.data**2) + eps
         #print('...done')
-        self._compute_affinity_matrix('haarpsi')
+        self._compute_affinity_matrix(self.distance)
         def WCSS(clust1_idx,clust2_idx):
             samples1 = [self.samples[i] for i in clust1_idx]
             samples2 = [self.samples[i] for i in clust2_idx]
@@ -1081,11 +1114,9 @@ class ksvd_dict(Oc_Dict):
         self.sparsity = sparsity
         self.maxiter = maxiter
         self.implementation = implementation
-        from oct2py import octave
-        octave.addpath('ksvd')
-        octave.addpath('ksvdbox/')
+        #from oct2py import octave
         #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
-        self.octave = octave
+        #self.octave = octave
         #import oct2py
         #self.oc = oct2py.Oct2Py
         #self.oc.eval('addpath ksvdbox')
@@ -1123,7 +1154,8 @@ class ksvd_dict(Oc_Dict):
                  'Tdata': self.sparsity,
                  'dictsize': self.dictsize,
                  'memusage': 'normal'} #'low','normal' or 'high'
-        [D,X] = self.octave.ksvd(params)
+        #[D,X] = self.octave.ksvd(params)
+        [D,X] = octave.ksvd(params)
         #[D,X] = self.oc.eval('ksvdparams)
         self.encoding = X
         self.matrix = D
