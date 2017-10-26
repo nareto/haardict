@@ -32,6 +32,8 @@ _METHODS_ = ['2ddict','ksvd']
 _CLUSTERINGS_ = ['2means','spectral']
 _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
+_MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-3
+_MAX_SIGNIFICATIVE_MACHINE_NUMBER = 1e3
 
 def matrix2patches(matrix,shape=None):
     """Returns list of arrays obtained from columns of matrix"""
@@ -826,27 +828,41 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,distance,epsilon,minsamples=5,implementation='scikit'):
+    def __init__(self,samples,epsilon,distance,affinity_matrix_threshold=0.4,minsamples=5,implementation='scikit'):
         """	samples: patches to cluster
     		distance: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node"""
         
         Cluster.__init__(self,samples)
         self.distance = distance
+        self.affinity_matrix_threshold = affinity_matrix_threshold
         self.patch_size = self.samples[0].shape
         self.epsilon = epsilon
         self.minsamples = minsamples
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
-    def _compute_affinity_matrix(self,distance='haarpsi',threshold=0.6,beta=5,eps=0):
-
-        if distance == 'haarpsi':
+    def _compute_dist_rows_cols(self, dist):
+        data = []
+        rows = []
+        cols = []
+        counter = 0
+        for i,j in itertools.combinations(range(self.nsamples),2):
+            print('\r%d/%d' % (counter + 1,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
+            d = dist(self.samples[i], self.samples[j])
+            data.append(d)
+            rows.append(i)
+            cols.append(j)
+            counter += 1
+        return(data,rows,cols)        
+    
+    def _compute_affinity_matrix(self):
+        if self.distance == 'haarpsi':
             #dist = lambda patch1,patch2: HaarPSI(patch1,patch2)
             dist = lambda patch1,patch2: 1 - haar_psi(patch1,patch2)[0]
-        elif distance == 'euclidean':
+        elif self.distance == 'euclidean':
             dist = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
-        elif distance == 'emd':
+        elif self.distance == 'emd':
             prows,pcols = self.patch_size
             histlength = prows*pcols
             metric_matrix = np.zeros((histlength,histlength))
@@ -860,30 +876,23 @@ class spectral_clustering(Cluster):
             dist  = lambda patch1,patch2: pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)
             
         print('Computing affinity matrix...')
-        data = []
-        indices = []
-        indptr = [0]
-        oldi = 0
-        cumrowlength = 0
-        counter = 0
-        for i,j in itertools.combinations(range(self.nsamples),2):
-            print('\r%d/%d' % (counter + 1,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
-            if i != oldi:
-                indptr.append(cumrowlength)
-                oldi = i
-            d = dist(self.samples[i], self.samples[j])
-            expd = np.exp(-beta*d) + eps
-            if expd > threshold:
-                data.append(expd)
-                indices.append(j)
-                cumrowlength += 1
-            counter += 1
-        indptr.append(cumrowlength)
-        #artificially add last row of all zeroes
-        data.append(0)
-        indices.append(self.nsamples-1)
-        indptr.append(cumrowlength+1)
-        expaff_mat = csr_matrix((data,indices,indptr),shape=(self.nsamples,self.nsamples))
+        data,rows,cols = self._compute_dist_rows_cols(dist)
+        for i,d in enumerate(data):
+            if d > self.affinity_matrix_threshold:
+                data = data[:i] + data[i+1:]
+                rows = rows[:i] + rows[i+1:]
+                cols = cols[:i] + cols[i+1:]
+        data = np.array(data)
+        self.dist_data = data
+        #avgd = data.mean()
+        #vard = np.sqrt(data.var())
+        #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER*_MAX_SIGNIFICATIVE_MACHINE_NUMBER))/(2*(avgd - 5*vard))
+        #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER))/(avgd - 3*vard)
+        #print('\navgd = %f\n vard = %f\n beta = %f' % (avgd,vard,beta))
+        data /= data.max()
+        beta = 4
+        exp_data = np.exp(-beta*data)
+        expaff_mat = csr_matrix((exp_data,(rows,cols)),shape=(self.nsamples,self.nsamples))
         print('...done')
         expaff_mat = expaff_mat + expaff_mat.transpose()
         self.affinity_matrix = expaff_mat
@@ -893,8 +902,7 @@ class spectral_clustering(Cluster):
             self._cluster_scikit()
         elif self.implementation == 'explicit':
             self._cluster_explicit()
-        
-        
+
     def _cluster_scikit(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
         tovisit = []
@@ -910,7 +918,7 @@ class spectral_clustering(Cluster):
         #affinity_matrix = kneighbors_graph(self.cluster_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
         #affinity_matrix.data = np.exp(-beta*affinity_matrix.data**2) + eps
         #print('...done')
-        self._compute_affinity_matrix(self.distance)
+        self._compute_affinity_matrix()
         def WCSS(clust1_idx,clust2_idx):
             samples1 = [self.samples[i] for i in clust1_idx]
             samples2 = [self.samples[i] for i in clust2_idx]
