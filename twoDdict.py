@@ -828,7 +828,7 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,distance,affinity_matrix_threshold=0.4,minsamples=5,implementation='scikit'):
+    def __init__(self,samples,epsilon,distance,affinity_matrix_threshold=0.4,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
     		distance: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node"""
@@ -874,7 +874,6 @@ class spectral_clustering(Cluster):
                 metric_matrix[i,j] = np.linalg.norm(p1-p2)
             metric_matrix += metric_matrix.transpose()
             dist  = lambda patch1,patch2: pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)
-            
         print('Computing affinity matrix...')
         data,rows,cols = self._compute_dist_rows_cols(dist)
         for i,d in enumerate(data):
@@ -912,12 +911,6 @@ class spectral_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        #nneighs = int(self.nsamples/3)
-        #print('Computing affinity matrix...')
-        ##TODO: kneigbhors using custom distance!!
-        #affinity_matrix = kneighbors_graph(self.cluster_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
-        #affinity_matrix.data = np.exp(-beta*affinity_matrix.data**2) + eps
-        #print('...done')
         self._compute_affinity_matrix()
         def WCSS(clust1_idx,clust2_idx):
             samples1 = [self.samples[i] for i in clust1_idx]
@@ -969,28 +962,9 @@ class spectral_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        nneighs = int(self.nsamples/3)
-        #self.affinity_matrix = kneighbors_graph(self.cluster_data_matrix, n_neighbors=nneighs, include_self=False,mode='distance')#.todense()
-        #self.affinity_matrix.data = np.exp(-beta*self.affinity_matrix.data/std) + eps
-        beta = 10
-        eps = 0
-        print('Computing affinity matrix...')
-        #expaff_mat = np.zeros(shape=(self.nsamples,self.nsamples))
-        expaff_mat = csr_matrix((self.nsamples,self.nsamples),dtype=np.float)
-        thresh = 0.6
-        for i in range(self.nsamples):
-            #if i % 1000 == 0:
-            #    print(i,len(expaff_mat.data))
-            for j in range(i):
-                dist = np.linalg.norm(self.samples[i] - self.samples[j])
-                expdist = np.exp(-beta*dist) + eps
-                #expdist = HaarPSI(data[i],data[j])
-                if expdist > thresh:
-                    #print('yep')
-                    expaff_mat[i,j] = expdist
-                #expaff_mat[j,i] = expdist
-        print('...done')
-        expaff_mat = expaff_mat + expaff_mat.transpose()
+        #self._compute_affinity_matrix()
+        #np.save('tmpaffmat',self.affinity_matrix)
+        self.affinity_matrix = np.load('tmpaffmat.npy').item()
         self.egvecs = []
                 
         def Ncut(D,W,y):
@@ -1002,71 +976,38 @@ class spectral_clustering(Cluster):
             cur = tovisit.pop()
             lsamples_idx = []
             rsamples_idx = []
-            aff_mat = expaff_mat[cur.samples_idx,:][:,cur.samples_idx]
-            diag = np.array([row.sum() for row in aff_mat[:,:]])
+            aff_mat = self.affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
+            diag = np.array([row.sum() for row in aff_mat])
             diagsqrt = np.diag(diag**(-1/2))
             mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
             #print(depth, cur.nsamples,aff_mat.shape)
-            print('Computing eigenvalues/vectors of %s matrix' % mat.shape)
+            #print('Computing eigenvalues/vectors of %s x %s matrix' % mat.shape)
             egval,egvec = sslinalg.eigsh(mat,k=2,which='SM')
             #print("eigenvalues: ", egval)
             vec = egvec[:,1] #second eigenvalue
             #simple mean thresholding:
             #mean = vec.mean()
-            #ipdb.set_trace()
             #isinleftcluster = vec > mean
             isinleftcluster = vec > filters.threshold_otsu(vec)
-            #ipdb.set_trace()
-            #ncutval = None
-            #thresh_vals = vec.copy()
-            #thresh_vals.sort()
-            #for thresh_val in np.arange(vec.min(),vec.max(),(vec.max()-vec.min())/10):
-            #step = int(len(vec)/10)
-            #print("len vec = ", len(vec), "step = ", step)
-            #for thresh_val in thresh_vals[-2::-step]:
-            #for thresh_val in thresh_vals[::step]:
-            #    cand_y = vec > thresh_val
-            #    if cand_y.var() == 0: #cheap way to see if cand_y is constant
-            #        continue
-            #    cand_ncutval = Ncut(np.diag(diag),aff_mat,cand_y)
-            #    print("Ncut = ", cand_ncutval,  "greater : ", len(cand_y.nonzero()[0]))
-            #    if ncutval is None or cand_ncutval < ncutval:
-            #        ncutval = cand_ncutval
-            #        isinleftcluster = cand_y
-            #        #y = cand_y
-            touchA,touchB = (0,0)
             for k,label in np.ndenumerate(isinleftcluster):
                 k = k[0]
                 if label:
                     lsamples_idx.append(cur.samples_idx[k])
-                    touchA += 1
                 else:
                     rsamples_idx.append(cur.samples_idx[k])
-                    touchB += 1
-                #if (touchA >= 10 and touchB >= 10) and (leftrep.matrix.std() < 1.e-7 or  rightrep.matrix.std() < 1.e-7):
-                #    ipdb.set_trace()
-            print("left and right cards: ", touchA,touchB)
-            #leftrep.feature_matrix /= np.linalg.norm(leftrep.feature_matrix)
-            #rightrep.feature_matrix /= np.linalg.norm(rightrep.feature_matrix)
-            #leftvar = np.trace(covariance_matrix([self.samples[i].transpose() for i in lsamples_idx]))
-            #rightvar = np.trace(covariance_matrix([self.samples[i].transpose() for i in rsamples_idx]))
-            #minvar = min(leftvar,rightvar)
-            #print("left and rightvar: ", leftvar,rightvar)
+            #print("left and right cards: ", len(lsamples_idx),len(rsamples_idx))
             ncutval = Ncut(np.diag(diag),aff_mat,isinleftcluster)
-            print("Ncut = ", ncutval)
-            #ipdb.set_trace()
-            if ncutval > epsilon:
+            #print("Ncut = ", ncutval)
+            if ncutval > self.epsilon:
                 lnode = Node(lsamples_idx,cur,True)
                 rnode = Node(rsamples_idx,cur,False)
                 cur.children = (lnode,rnode)
                 depth = max((depth,lnode.depth,rnode.depth))
                 self.egvecs.append((depth,vec,isinleftcluster))
-                if len(lsamples_idx) > minsamples:
+                if len(lsamples_idx) > self.minsamples:
                     tovisit = [lnode] + tovisit
-                if len(rsamples_idx) > minsamples:
+                if len(rsamples_idx) > self.minsamples:
                     tovisit = [rnode] + tovisit
-            else:
-                print('closing current branch')
             if cur.children is None:
                 self.leafs.append(cur)
         self.tree_depth = depth
