@@ -5,29 +5,32 @@ import matplotlib.pyplot as plt
 np.random.seed(123)
     
 plot = False
-#learnimg = 'img/flowers_pool-rescale.npy'
-#codeimg = 'img/flowers_pool-rescale.npy'
-learnimg = 'img/flowers_pool-small.npy'
-codeimg = 'img/flowers_pool-small.npy'
+learnimg = 'img/flowers_pool-rescale.npy'
+codeimg = 'img/flowers_pool-rescale.npy'
+#learnimg = 'img/flowers_pool-small.npy'
+#codeimg = 'img/flowers_pool-small.npy'
 patch_size = (8,8)
-#npatches = None
-npatches = 500
+npatches = None
+#npatches = 100
 sparsity = 2
 meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
-#clust = '2means'
-clust = 'spectral'
-cluster_epsilon = 0.01
+clust = '2means'
+#clust = 'spectral'
+cluster_epsilon = 10
 spectral_distance = 'haarpsi'
+#spectral_distance = 'emd'
+#spectral_distance = 'euclidean'
 #cluster_epsilon = 10
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet_packet'
 #learn_transf = '2dpca'
 learn_transf = None
+tdpcal,tdpcar = 4,4
 rec_transf = None
 #rec_transf = 'wavelet_packet'
-ksvd_cardinality = 15
+ksvd_cardinality = 6358
 
 ### LEARNING ###
 ksvd_sparsity = sparsity
@@ -36,7 +39,15 @@ reconstructed = {}
 dwtd = False
 if rec_transf is not None:
     dwtd = True
-dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_distance=spectral_distance,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,dict_with_transformed_data=dwtd)
+try:
+    tic()
+except:
+    pass
+dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_distance=spectral_distance,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd)
+try:
+    toc()
+except:
+    pass
 
 ### RECONSTRUCT ###
 rec = reconstruct(dictionary,codeimg,sparsity,rec_transf)

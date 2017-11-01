@@ -20,12 +20,12 @@ import oct2py
 import gc
 import queue
 import pywt
-from oct2py import octave
-octave.eval('pkg load image')
-oc = oct2py.Oct2Py()
-#octave.addpath('ksvd')
-octave.addpath('ksvdbox/')
-octave.addpath('ompbox/')
+#from oct2py import octave
+#octave.eval('pkg load image')
+#oc = oct2py.Oct2Py()
+##octave.addpath('ksvd')
+#octave.addpath('ksvdbox/')
+#octave.addpath('ompbox/')
 from haarpsi import haar_psi
 
 _METHODS_ = ['2ddict','ksvd']
@@ -332,9 +332,9 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     patches = []
     for i in images:
         patches += [p for p in extract_patches(i,patch_size)]
-    patches = np.array(patches)
+    #patches = np.array(patches)
     if npatches is not None:
-        patches = patches[np.random.permutation(range(len(patches)))[:npatches]]
+        patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:npatches]
         
     #TRANSFORM
     if transform == '2dpca':
@@ -364,7 +364,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
         dictionary = hierarchical_dict(cluster_instance,patches4dict)
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
-    dictionary.compute()
+    #dictionary.compute()
     return(dictionary)
 
 def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3,wavelet='haar'):
@@ -641,6 +641,7 @@ class Oc_Dict(Saveable):
             coef = octave.OMP(sparsity,y.transpose(),matrix).transpose()
         return(coef,mean)
 
+
     def show_dict_patches(self,shape=None,patch_shape=None):
         if patch_shape is None:
             s = int(np.sqrt(self.atom_dim))
@@ -859,7 +860,8 @@ class spectral_clustering(Cluster):
     def _compute_affinity_matrix(self):
         if self.distance == 'haarpsi':
             #dist = lambda patch1,patch2: HaarPSI(patch1,patch2)
-            dist = lambda patch1,patch2: 1 - haar_psi(patch1,patch2)[0]
+            dist = lambda patch1,patch2: 100*(1 - haar_psi(patch1,patch2)[0])
+            #dist = lambda patch1,patch2: 1/haar_psi(patch1,patch2)[0]
         elif self.distance == 'euclidean':
             dist = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
         elif self.distance == 'emd':
@@ -962,9 +964,9 @@ class spectral_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        #self._compute_affinity_matrix()
+        self._compute_affinity_matrix()
         #np.save('tmpaffmat',self.affinity_matrix)
-        self.affinity_matrix = np.load('tmpaffmat.npy').item()
+        #self.affinity_matrix = np.load('tmpaffmat.npy').item()
         self.egvecs = []
                 
         def Ncut(D,W,y):
@@ -1063,12 +1065,10 @@ class ksvd_dict(Oc_Dict):
         self.sparsity = sparsity
         self.maxiter = maxiter
         self.implementation = implementation
-        #from oct2py import octave
-        #octave.addpath('ompbox/') #TODO: BUG. from within ipython: first run uncomment, then comment. otherwise doesn't work....
-        #self.octave = octave
-        #import oct2py
-        #self.oc = oct2py.Oct2Py
-        #self.oc.eval('addpath ksvdbox')
+        from oct2py import octave
+        self.octave = octave
+        self.octave.addpath('ompbox/')
+        self.octave.addpath(implementation+'/')
         self.compute()
         Oc_Dict.__init__(self,self.matrix)
 
@@ -1087,7 +1087,7 @@ class ksvd_dict(Oc_Dict):
         #octave.addpath('ksvd')
         Y = patches2matrix(self.patches)
         #octave.addpath('../ksvd')
-        D = octave.KSVD(Y,param)
+        D = self.octave.KSVD(Y,param)
         self.matrix = D
         self.dictelements = []
         rows,cols = self.patches[0].shape
@@ -1104,7 +1104,9 @@ class ksvd_dict(Oc_Dict):
                  'dictsize': self.dictsize,
                  'memusage': 'normal'} #'low','normal' or 'high'
         #[D,X] = self.octave.ksvd(params)
-        [D,X] = octave.ksvd(params)
+        print('Computing ksvd...')
+        [D,X] = self.octave.ksvd(params)
+        print('Done...')
         #[D,X] = self.oc.eval('ksvdparams)
         self.encoding = X
         self.matrix = D
