@@ -100,7 +100,7 @@ def psnr(img1,img2):
     maxval = img1.max()
     return(20*np.log10(maxval/mse))
 
-def HaarPSI(img1,img2):
+def HaarPSI_octave(img1,img2):
     """Computes HaarPSI of img1 vs. img2. Requires file HaarPSI.m to be present in working directory"""
     #if 'octpy2' not in dir():
     from oct2py import octave
@@ -110,35 +110,32 @@ def HaarPSI(img1,img2):
     haarpsi = octave.HaarPSI(img1,img2,0)
     return(haarpsi)
 
-def vecHaarPSI(arr1,arr2,shape=(8,8)):
-    #from oct2py import octave
-    #octave.eval('pkg load image')
-    haarpsi = oc.HaarPSI(arr1.reshape(shape),arr2.reshape(shape))
-    #print(haarpsi)
-    #ipdb.set_trace()
-    return(haarpsi)
+#dissimilarity measures 
+def diss_haarpsi(scaling=1):
+    ret = lambda patch1,patch2: scaling*(1 - haar_psi(patch1,patch2)[0])
+    return(ret)
 
-def affinity_matrix(X,sigma=1,threshold=0.5):
-    """Computes affinity matrix of the distance-weighted graph built from X's rows"""
-    nsamples,dim = X.shape
-    W = np.zeros(shape=(nsamples,nsamples))
-    dists = []
-    for i in range(nsamples):
-        for j in range(i+1):
-            v_i = X[i,:]
-            v_j = X[j,:]
-            d_ij = np.linalg.norm(v_i - v_j)
-            dists.append(d_ij)
-            if d_ij < threshold:
-                w_ij = np.exp(-d_ij/sigma)
-                W[i,j] = w_ij
-                W[j,i] = w_ij
-    return(W,dists)
+def diss_euclidean():
+    ret = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
+    return(ret)
 
+def diss_emd(patch_size):
+    prows,pcols = patch_size
+    histlength = prows*pcols
+    metric_matrix = np.zeros((histlength,histlength))
+    for i,j in itertools.combinations(range(histlength),2):
+        row1,col1 = int(i/pcols),i%pcols
+        row2,col2 = int(j/pcols),j%pcols
+        p1 = np.array([row1,col1])
+        p2 = np.array([row2,col2])
+        metric_matrix[i,j] = np.linalg.norm(p1-p2)
+    metric_matrix += metric_matrix.transpose()
+    ret = lambda patch1,patch2: pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)
+    return(ret)
 
 def centroid(values):
     """Computes mean of 'values'"""
-    
+
     if len(values) == 0:
         raise Exception("Can't compute centroid of void set")
     centroid = 0
@@ -288,14 +285,14 @@ def np_or_img_to_array(path,crop_to_patchsize=None):
     elif path[-3:].upper() in  ['NPY']:
         ret = np.load(path)
     elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
-        ret = rescale(read_raw_img(imgpath))
+        ret = read_raw_img(path)
     if crop_to_patchsize is not None:
         m,n = crop_to_patchsize
         M,N = ret.shape
         ret = ret[:M-(M%m),:N-(N%n)]
     return(255*ret)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_distance='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -312,7 +309,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
-    spectral_distance: distance used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
+    spectral_dissimilarity: dissimilarity measure used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
     wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
     wav_lev: number of levels for the wavelet transform
@@ -335,7 +332,8 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     #patches = np.array(patches)
     if npatches is not None:
         patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:npatches]
-        
+    print('Working with %d patches' % len(patches))
+    
     #TRANSFORM
     if transform == '2dpca':
         transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
@@ -353,7 +351,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     elif clustering == '2means':
         cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
     elif clustering == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,distance=spectral_distance)    
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,dissimilarity=spectral_dissimilarity)    
     cluster_instance.compute()
 
     #BUILD DICT
@@ -556,6 +554,26 @@ class Oc_Dict(Saveable):
         self._compute()
         self._matrix_from_patch_list(self)
 
+    def min_dissimilarities(self,dissimilarity='euclidean'):
+        """Returns array of minimum dissimilarities from dictionary atoms to input patches"""
+        
+        if dissimilarity == 'haarpsi':
+            diss = diss_haarpsi(1)
+        elif dissimilarity == 'euclidean':
+            diss = diss_euclidean()
+        elif dissimilarity == 'emd':
+            diss = diss_emd(self.patch_size)
+        min_diss = []
+        counter = 0
+        for d in self.dictelements:
+            md = diss(d,self.patches[0])
+            for p in self.patches:
+                print('\r%d/%d' % (counter + 1,len(self.patches)*self.cardinality), sep=' ',end='',flush=True)
+                md = min(md,diss(d,p))
+                counter += 1
+            min_diss.append(md)
+        self.min_diss = min_diss
+    
     def mutual_coherence(self):
         self.max_cor = 0
         self.argmax_cor = None
@@ -803,12 +821,14 @@ class twomeans_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
+        self.wcss = []
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lsamples_idx = []
             rsamples_idx = []
             if cur.nsamples > self.minsamples:
-                km = KMeans(n_clusters=2).fit(self.cluster_matrix[np.array(cur.samples_idx)]) 
+                km = KMeans(n_clusters=2).fit(self.cluster_matrix[np.array(cur.samples_idx)])
+                self.wcss.append(km.inertia_)
                 if km.inertia_ > self.epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):
                         if label == 0:
@@ -829,13 +849,13 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,distance,affinity_matrix_threshold=0.4,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold=0.4,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
-    		distance: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
+    		dissimilarity: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node"""
         
         Cluster.__init__(self,samples)
-        self.distance = distance
+        self.dissimilarity = dissimilarity
         self.affinity_matrix_threshold = affinity_matrix_threshold
         self.patch_size = self.samples[0].shape
         self.epsilon = epsilon
@@ -843,7 +863,7 @@ class spectral_clustering(Cluster):
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
-    def _compute_dist_rows_cols(self, dist):
+    def _compute_diss_rows_cols(self, dist):
         data = []
         rows = []
         cols = []
@@ -858,26 +878,14 @@ class spectral_clustering(Cluster):
         return(data,rows,cols)        
     
     def _compute_affinity_matrix(self):
-        if self.distance == 'haarpsi':
-            #dist = lambda patch1,patch2: HaarPSI(patch1,patch2)
-            dist = lambda patch1,patch2: 100*(1 - haar_psi(patch1,patch2)[0])
-            #dist = lambda patch1,patch2: 1/haar_psi(patch1,patch2)[0]
-        elif self.distance == 'euclidean':
-            dist = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
-        elif self.distance == 'emd':
-            prows,pcols = self.patch_size
-            histlength = prows*pcols
-            metric_matrix = np.zeros((histlength,histlength))
-            for i,j in itertools.combinations(range(histlength),2):
-                row1,col1 = int(i/pcols),i%pcols
-                row2,col2 = int(j/pcols),j%pcols
-                p1 = np.array([row1,col1])
-                p2 = np.array([row2,col2])
-                metric_matrix[i,j] = np.linalg.norm(p1-p2)
-            metric_matrix += metric_matrix.transpose()
-            dist  = lambda patch1,patch2: pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)
+        if self.dissimilarity == 'haarpsi':
+            diss = diss_haarpsi(1)
+        elif self.dissimilarity == 'euclidean':
+            diss = diss_euclidean()
+        elif self.dissimilarity == 'emd':
+            diss  = diss_emd(self.patch_size)
         print('Computing affinity matrix...')
-        data,rows,cols = self._compute_dist_rows_cols(dist)
+        data,rows,cols = self._compute_diss_rows_cols(diss)
         for i,d in enumerate(data):
             if d > self.affinity_matrix_threshold:
                 data = data[:i] + data[i+1:]
