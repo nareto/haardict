@@ -468,7 +468,7 @@ class Cluster(Saveable):
                 tovisit = [cur.children[1]] + tovisit
         return(patches)
         
-    def show_clusters(self,rows=10,cols=10,startingnode=None):
+    def show_clusters(self,shape=None,startingnode=None,savefile=None):
         clusters = []
         if startingnode is None:
             tovisit = [self.root_node]
@@ -480,8 +480,9 @@ class Cluster(Saveable):
             tovisit = [nextn]
         while len(tovisit) > 0:
             cur = tovisit.pop()
-            centroid = sum([self.patches[i] for i in cur.patches_idx[1:]],self.patches[cur.patches_idx[0]])
+            centroid = sum([self.samples[i] for i in cur.samples_idx[1:]],self.samples[cur.samples_idx[0]])
             #centroid = sum([self.patches[i] for i in cur.patches_idx])
+            centroid /= len(cur.samples_idx)
             if cur.idstr == '':
                 string = 'root'
             else:
@@ -490,6 +491,10 @@ class Cluster(Saveable):
             if cur.children is not None:
                 tovisit = [cur.children[0]] + tovisit
                 tovisit = [cur.children[1]] + tovisit
+        if shape is None:
+            l = int(np.sqrt(len(clusters)))
+            shape = (min(10,l),min(10,l))
+        rows,cols = shape
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         if len(axis.shape) == 2:
             for idx, a in np.ndenumerate(axis):
@@ -503,9 +508,10 @@ class Cluster(Saveable):
                 clust,string = clusters[idx[0]]
                 a.imshow(clust,interpolation='nearest')
                 a.text(0,0,string,color='red')
-        plt.show()
-        return(clusters)
-
+        if savefile is None:
+            plt.show()
+        else:
+            plt.savefig(savefile)
         
 class Oc_Dict(Saveable):
     """Dictionary"""
@@ -565,6 +571,7 @@ class Oc_Dict(Saveable):
             diss = diss_emd(self.patch_size)
         min_diss = []
         counter = 0
+        print('Computing minimum dissimilarities with dissimilarity measure: %s' % (dissimilarity))
         for d in self.dictelements:
             md = diss(d,self.patches[0])
             for p in self.patches:
@@ -660,7 +667,7 @@ class Oc_Dict(Saveable):
         return(coef,mean)
 
 
-    def show_dict_patches(self,shape=None,patch_shape=None):
+    def show_dict_patches(self,shape=None,patch_shape=None,savefile=None):
         if patch_shape is None:
             s = int(np.sqrt(self.atom_dim))
             patch_shape = (s,s)
@@ -684,9 +691,10 @@ class Oc_Dict(Saveable):
                 j = 0                
             ax.set_axis_off()
             ax.imshow(self.atom_patches[cols*i + j],interpolation='nearest')
-        plt.show()
-
-
+        if savefile is None:
+            plt.show()
+        else:
+            plt.savefig(savefile)
 
 class dummy_transform(Transform):
     def __init__(self,patch_list):
@@ -849,28 +857,29 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold=0.4,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold_perc=0.4,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
     		dissimilarity: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
-        	epsilon: threshold for WCSS used as criteria to branch on a tree node"""
+        	epsilon: threshold for WCSS used as criteria to branch on a tree node
+        	affinity_matrix_threshold_perc: percentage of nonzero elements in affinity matrix"""
         
         Cluster.__init__(self,samples)
         self.dissimilarity = dissimilarity
-        self.affinity_matrix_threshold = affinity_matrix_threshold
+        self.affinity_matrix_threshold_perc = affinity_matrix_threshold_perc
         self.patch_size = self.samples[0].shape
         self.epsilon = epsilon
         self.minsamples = minsamples
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
-    def _compute_diss_rows_cols(self, dist):
+    def _compute_diss_rows_cols(self, diss):
         data = []
         rows = []
         cols = []
         counter = 0
         for i,j in itertools.combinations(range(self.nsamples),2):
             print('\r%d/%d' % (counter + 1,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
-            d = dist(self.samples[i], self.samples[j])
+            d = diss(self.samples[i], self.samples[j])
             data.append(d)
             rows.append(i)
             cols.append(j)
@@ -886,13 +895,19 @@ class spectral_clustering(Cluster):
             diss  = diss_emd(self.patch_size)
         print('Computing affinity matrix...')
         data,rows,cols = self._compute_diss_rows_cols(diss)
+        thresholded_data = data.copy()
+        data.sort()
+        thresh = data[int(self.affinity_matrix_threshold_perc*len(data))]
+        removed = 0
         for i,d in enumerate(data):
-            if d > self.affinity_matrix_threshold:
-                data = data[:i] + data[i+1:]
-                rows = rows[:i] + rows[i+1:]
-                cols = cols[:i] + cols[i+1:]
-        data = np.array(data)
-        self.dist_data = data
+            if d > thresh:
+                idx = i-removed
+                thresholded_data = thresholded_data[:idx] + thresholded_data[idx+1:]
+                rows = rows[:idx] + rows[idx+1:]
+                cols = cols[:idx] + cols[idx+1:]
+                removed += 1
+        data = np.array(thresholded_data)
+        self.diss_data = data
         #avgd = data.mean()
         #vard = np.sqrt(data.var())
         #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER*_MAX_SIGNIFICATIVE_MACHINE_NUMBER))/(2*(avgd - 5*vard))
@@ -905,6 +920,7 @@ class spectral_clustering(Cluster):
         print('...done')
         expaff_mat = expaff_mat + expaff_mat.transpose()
         self.affinity_matrix = expaff_mat
+        #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
         
     def _cluster(self):
         if self.implementation == 'scikit':
@@ -1007,8 +1023,12 @@ class spectral_clustering(Cluster):
                     rsamples_idx.append(cur.samples_idx[k])
             #print("left and right cards: ", len(lsamples_idx),len(rsamples_idx))
             ncutval = Ncut(np.diag(diag),aff_mat,isinleftcluster)
-            #print("Ncut = ", ncutval)
-            if ncutval > self.epsilon:
+            #if np.linalg.norm(aff_mat[1:,1:].todense()) == 0:
+            #    ipdb.set_trace()
+            #print("Ncut = ", ncutval)]
+            leftaffmatnorm = np.linalg.norm(self.affinity_matrix[lsamples_idx,:][:,lsamples_idx].todense())
+            rightaffmatnorm = np.linalg.norm(self.affinity_matrix[rsamples_idx,:][:,rsamples_idx].todense())
+            if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0:
                 lnode = Node(lsamples_idx,cur,True)
                 rnode = Node(rsamples_idx,cur,False)
                 cur.children = (lnode,rnode)
@@ -1034,7 +1054,10 @@ class hierarchical_dict(Oc_Dict):
     def _compute(self,normalize=True):
         root_node = self.clustering.root_node
         tovisit = [root_node]
-        dictelements = [(1/self.npatches)*sum(self.patches[1:],self.patches[0])] #global average
+        ga = (1/self.npatches)*sum(self.patches[1:],self.patches[0])
+        if normalize:
+            ga /= np.linalg.norm(ga)
+        dictelements = [ga] #global average
         self.leafs = []
         cur_nodes = set()
         prev_nodes = set()
