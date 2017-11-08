@@ -112,7 +112,7 @@ def HaarPSI_octave(img1,img2):
 
 #dissimilarity measures 
 def diss_haarpsi(scaling=1):
-    ret = lambda patch1,patch2: scaling*(1 - haar_psi(patch1,patch2)[0])
+    ret = lambda patch1,patch2: scaling*(1 - haar_psi(255*patch1,255*patch2)[0])
     return(ret)
 
 def diss_euclidean():
@@ -281,7 +281,7 @@ def orgmode_table_line(strings_or_n):
 
 def np_or_img_to_array(path,crop_to_patchsize=None):
     if path[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
-        ret = skimage.io.imread(path,as_grey=True)
+        ret = skimage.io.imread(path,as_grey=True).astype('float64')/255
     elif path[-3:].upper() in  ['NPY']:
         ret = np.load(path)
     elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
@@ -290,7 +290,8 @@ def np_or_img_to_array(path,crop_to_patchsize=None):
         m,n = crop_to_patchsize
         M,N = ret.shape
         ret = ret[:M-(M%m),:N-(N%n)]
-    return(255*ret)
+    return(ret)
+
 
 def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
     """Learns dictionary based on the selected method. 
@@ -672,7 +673,7 @@ class Oc_Dict(Saveable):
             s = int(np.sqrt(self.atom_dim))
             patch_shape = (s,s)
         if shape is None:
-            l = int(self.cardinality/10)
+            l = int(np.sqrt(self.cardinality))
             shape = (min(10,l),min(10,l))
         rows,cols = shape
         if not hasattr(self,'atom_patches'):
@@ -820,6 +821,7 @@ class twomeans_clustering(Cluster):
         self.minsamples = minsamples
         self.cluster_matrix = patches2matrix(self.samples).transpose()
 
+    #@profile
     def _cluster(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
         tovisit = []
@@ -835,7 +837,9 @@ class twomeans_clustering(Cluster):
             lsamples_idx = []
             rsamples_idx = []
             if cur.nsamples > self.minsamples:
-                km = KMeans(n_clusters=2).fit(self.cluster_matrix[np.array(cur.samples_idx)])
+                #km_instance = KMeans(n_clusters=2,n_jobs=-1)
+                km_instance = KMeans(n_clusters=2,tol=0.1)
+                km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
                 self.wcss.append(km.inertia_)
                 if km.inertia_ > self.epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):

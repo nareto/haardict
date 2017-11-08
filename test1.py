@@ -9,35 +9,40 @@ plot = False
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
 learnimg = 'img/flowers_pool-rescale.npy'
-codeimg = 'img/flowers_pool-rescale.npy'
+#codeimg = 'img/flowers_pool-rescale.npy'
+#codeimg = 'img/rocks_lake-rescaled.npy'
+codeimg = 'img/barbara.jpg'
 #learnimg = 'img/flowers_pool-small.npy'
 #codeimg = 'img/flowers_pool-small.npy'
-patch_size = (16,16)
+#patch_size = (16,16)
+patch_size = (24,24)
 #patch_size = (8,8)
-#npatches = None
-npatches = 500
+npatches = None
+#npatches = 500
 sparsity = 2
 #meth = '2ddict'
 meth = 'ksvd'
 #test_meths = ['ksvd']
 #clust = '2means'
 #clust = 'spectral'
-cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
+#cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 1e-4
 #cluster_epsilon = 8e4 #for 2means on 8x8 patches -> 42 dict card
-#cluster_epsilon = 2e4 #
+cluster_epsilon = 8
 #spectral_dissimilarity = 'haarpsi'
 #spectral_dissimilarity = 'emd'
 spectral_dissimilarity = 'euclidean'
 #cluster_epsilon = 10
 #learn_transf = 'wavelet'
+#wav = 'bior2.2'
 #learn_transf = 'wavelet_packet'
 #learn_transf = '2dpca'
 learn_transf = None
 tdpcal,tdpcar = 4,4
 rec_transf = None
+#rec_transf = 'wavelet'
 #rec_transf = 'wavelet_packet'
-ksvd_cardinality = 54
+ksvd_cardinality = 333
 
 ### LEARNING ###
 ksvd_sparsity = sparsity
@@ -50,7 +55,7 @@ try:
     tic()
 except:
     pass
-dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_dissimilarity=spectral_dissimilarity,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd)
+dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_dissimilarity=spectral_dissimilarity,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav)
 try:
     print('Learned dictionary in %f seconds' % toc(0))
 except:
@@ -61,21 +66,21 @@ try:
     tic()
 except:
     pass
-rec = reconstruct(dictionary,codeimg,sparsity,rec_transf)
+rec = reconstruct(dictionary,codeimg,sparsity,rec_transf,wavelet=wav)
 try:
     print('Reconstructed image in %f seconds' % toc(0))
 except:
     pass
-rec = rescale(rec,True)
+#rec = rescale(rec,True)
 img = np_or_img_to_array(codeimg,patch_size)
-hpi = haar_psi(img,rec)[0]
+hpi = haar_psi(255*img,255*rec)[0]
 psnrval = psnr(img,rec)
 twonorm = np.linalg.norm(img-rec,ord=2)
 #fronorm = np.linalg.norm(img-rec,ord='fro')
 
 desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
-desc_string += '\nLearn img: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nDictionary cardinality: %d' % \
-               (learnimg,codeimg,patch_size,len(dictionary.patches),meth,dictionary.cardinality)
+desc_string += '\nLearn img: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nDictionary cardinality: %d\nCoding sparsity: %d' % \
+               (learnimg,codeimg,patch_size,len(dictionary.patches),meth,dictionary.cardinality,sparsity)
 if learn_transf is not None:
     desc_string += '\nLearning transform: %s' % (learn_transf)
 if meth == '2ddict':
