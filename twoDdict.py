@@ -146,14 +146,14 @@ def centroid(values):
 
 def pywt2array(coeffs):
     levels = len(coeffs) - 1
-    baseexp = int(np.log2(coeffs[0].shape[0]))
-    tot_length = int(4**baseexp + sum([3*4**(baseexp+i) for i in range(levels)]))
+    baseexp = np.log2(coeffs[0].shape[0])
+    tot_length = int(np.round(4**baseexp + sum([3*4**(baseexp+i) for i in range(levels)])))
     out = np.zeros(tot_length)
-    out[:4**baseexp] = coeffs[0].flatten()
-    offset = 4**baseexp
+    out[:int(np.round(4**baseexp))] = coeffs[0].flatten()
+    offset = int(np.round(4**baseexp))
     for lev,details in enumerate(coeffs[1:]):
         dh,dv,dd = details
-        length = 4**(baseexp+lev)
+        length = int(np.round(4**(baseexp+lev)))
         for d in details:
             out[offset:offset+length] = d.flatten()
             offset += length
@@ -190,6 +190,35 @@ def array2wavpack(array,wavelet,levels,mode='periodic'):
         wp[key] = val
         i += 1
     return(wp)
+
+def normalize_matrix(matrix, norm_order=2):
+    """==  ============================  ==========================
+    ord    norm for matrices             norm for vectors
+    =====  ============================  ==========================
+    None   Frobenius norm                2-norm
+    'fro'  Frobenius norm                --
+    'nuc'  nuclear norm                  --
+    inf    max(sum(abs(x), axis=1))      max(abs(x))
+    -inf   min(sum(abs(x), axis=1))      min(abs(x))
+    0      --                            sum(x != 0)
+    1      max(sum(abs(x), axis=0))      as below
+    -1     min(sum(abs(x), axis=0))      as below
+    2      2-norm (largest sing. value)  as below
+    -2     smallest singular value       as below
+    other  --                            sum(abs(x)**ord)**(1./ord)
+    =====  ============================  ==========================
+
+    The nuclear norm is the sum of the singular values."""
+    cent_matrix = matrix - matrix.mean(axis=0)
+    ncols = matrix.shape[1]
+    normalization_coefficients = np.ones(shape=(matrix.shape[1],))
+    for j in range(ncols):
+        col = cent_matrix[:,j]
+        norm = np.linalg.norm(col,ord=norm_order)
+        if norm != 0:
+            col /= norm
+            normalization_coefficients[j] = norm
+    return(cent_matrix,normalization_coefficients)
 
 def twomeansval(values,k):
     """Computes value of 1D 2-means minimizer function for clusters values[:k] and values[k:]"""
@@ -235,7 +264,21 @@ def oneDtwomeans(values):
             centroid_dist = dist
     
     return(best_idx,best_kval,centroid_dist)
-    
+
+def atoms_prob(coef_matrix):
+    """Sums row of matrix and normalizes"""
+    ret = np.array([np.abs(row).sum() for row in coef_matrix])
+    ret /= ret.sum()
+    return(ret)
+
+def entropy(array):
+    """Returns entropy of normalized array"""
+    ent = 0
+    for a in array:
+        if a != 0:
+            ent += a*np.log2(a)
+    return(-ent)
+
 def extract_patches(array,size=(8,8)):
     """Returns list of small arrays partitioning the input array. See also assemble_patches"""
     
@@ -265,7 +308,7 @@ def assemble_patches(patches,out_size):
     
 def covariance_matrix(patches):
     """Computes generalized covariance matrix of arrays in patches"""
-    
+
     centroid = sum(patches)/len(patches)
     p = patches[0]
     ret = np.zeros_like(np.dot(p.transpose(),p))
@@ -293,7 +336,7 @@ def np_or_img_to_array(path,crop_to_patchsize=None):
     return(ret)
 
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -360,7 +403,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     if dict_with_transformed_data:
         patches4dict = data_to_cluster
     if method == '2ddict':
-        dictionary = hierarchical_dict(cluster_instance,patches4dict)
+        dictionary = hierarchical_dict(cluster_instance,patches4dict,dicttype)
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
     #dictionary.compute()
@@ -393,7 +436,7 @@ def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3,wavelet='haa
     reconstructed = assemble_patches(reconstructed_patches,img.shape)
     if clip:
         reconstructed = clip(reconstructed)
-    return(reconstructed)        
+    return(reconstructed,coefs)        
 
 class Saveable():
     def save_pickle(self,filepath):
@@ -525,36 +568,16 @@ class Oc_Dict(Saveable):
             self.twod_dict = True
 
     def _matrix_from_patch_list(self,normalize=True):
-        self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
-        self._normalize_matrix()
+        if type(self).__name__ == 'hierarchical_dict':
+            self.centroid_matrix = np.vstack([x.flatten() for x in self.centroid_dictelements]).transpose()
+            self.centroid_matrix,self.centroid_normalization_coefficients = normalize_matrix(self.centroid_matrix)
+            self.haar_matrix = np.vstack([x.flatten() for x in self.haar_dictelements]).transpose()
+            self.haar_matrix,self.haar_normalization_coefficients = normalize_matrix(self.haar_matrix)
+            self.set_dicttype(self.dicttype)
+        else:
+            self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
+            self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
 
-    def _normalize_matrix(self, norm_order=2):
-        """==  ============================  ==========================
-        ord    norm for matrices             norm for vectors
-        =====  ============================  ==========================
-        None   Frobenius norm                2-norm
-        'fro'  Frobenius norm                --
-        'nuc'  nuclear norm                  --
-        inf    max(sum(abs(x), axis=1))      max(abs(x))
-        -inf   min(sum(abs(x), axis=1))      min(abs(x))
-        0      --                            sum(x != 0)
-        1      max(sum(abs(x), axis=0))      as below
-        -1     min(sum(abs(x), axis=0))      as below
-        2      2-norm (largest sing. value)  as below
-        -2     smallest singular value       as below
-        other  --                            sum(abs(x)**ord)**(1./ord)
-        =====  ============================  ==========================
-        
-        The nuclear norm is the sum of the singular values."""
-        self.matrix = self.matrix - self.matrix.mean(axis=0)
-        ncols = self.matrix.shape[1]
-        self.normalization_coefficients = np.ones(shape=(self.matrix.shape[1],))
-        for j in range(ncols):
-            col = self.matrix[:,j]
-            norm = np.linalg.norm(col,ord=norm_order)
-            if norm != 0:
-                col /= norm
-                self.normalization_coefficients[j] = norm
 
     def compute(self):
         #self.compute_dictelements()
@@ -562,7 +585,7 @@ class Oc_Dict(Saveable):
         self._matrix_from_patch_list(self)
 
     def min_dissimilarities(self,dissimilarity='euclidean'):
-        """Returns array of minimum dissimilarities from dictionary atoms to input patches"""
+        """Computes self.min_diss, array of minimum dissimilarities from dictionary atoms to input patches"""
         
         if dissimilarity == 'haarpsi':
             diss = diss_haarpsi(1)
@@ -580,22 +603,28 @@ class Oc_Dict(Saveable):
                 md = min(md,diss(d,p))
                 counter += 1
             min_diss.append(md)
+        print('\n')
         self.min_diss = min_diss
     
-    def mutual_coherence(self):
+    def mutual_coherence(self,progress=True):
         self.max_cor = 0
         self.argmax_cor = None
         ncols = self.matrix.shape[1]
-        for j1 in range(ncols):
-            for j2 in range(j1+1,ncols):
-                col1 = self.matrix[:,j1]
-                col2 = self.matrix[:,j2]
-                sp = np.dot(col1,col2)
-                sp /= np.linalg.norm(col1)*np.linalg.norm(col2)
-                if sp > self.max_cor:
-                    self.argmax_cor = (j1,j2)
-                    self.max_cor = sprese
-        print('Maximum correlation: %f ---  columns %d and %d' % (self.max_cor,self.argmax_cor[0],self.argmax_cor[1]))
+        if progress:
+            print('Computing mutual coherence of dictionary')
+        counter = 0
+        for j1,j2 in itertools.combinations(range(ncols),2):
+            if progress:
+                print('\r%d/%d' % (counter + 1,ncols*(ncols-1)/2), sep=' ',end='',flush=True)
+            col1 = self.matrix[:,j1]
+            col2 = self.matrix[:,j2]
+            sp = np.dot(col1,col2)
+            sp /= np.linalg.norm(col1)*np.linalg.norm(col2)
+            if sp > self.max_cor:
+                self.argmax_cor = (j1,j2)
+                self.max_cor = sp
+            counter += 1
+        #print('\nMaximum correlation: %f ---  columns %d and %d' % (self.max_cor,self.argmax_cor[0],self.argmax_cor[1]))
 
     #def _encode_sample(self, sample):
     #    omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
@@ -625,7 +654,7 @@ class Oc_Dict(Saveable):
             #    matrix = self.normalized_matrix
             #    norm_coefs = self.normalization_coefficients
             omp.fit(self.matrix,samples)
-        return(means,omp.coef_)
+        return(means,omp.coef_.transpose())
 
     def encode_patches(self,patches,sparsity,center_samples=True):
         return(self.encode_samples(patches2matrix(patches),sparsity,center_samples))
@@ -634,7 +663,7 @@ class Oc_Dict(Saveable):
         if hasattr(self,'_reconstruct'):
             self._reconstruct(coefficients,means)
         else:
-            reconstructed = np.dot(self.matrix,coefficients.transpose())
+            reconstructed = np.dot(self.matrix,coefficients)#.transpose())
             if means is not None:
                 for i,m in enumerate(means):
                     reconstructed[:,i] += m
@@ -667,7 +696,33 @@ class Oc_Dict(Saveable):
             coef = octave.OMP(sparsity,y.transpose(),matrix).transpose()
         return(coef,mean)
 
+    def show_most_used_atoms(self,coefs,natoms = 100,savefile=None):
+        probs = atoms_prob(coefs)
+        maxidx = probs.argsort()[::-1]
+        l = int(np.sqrt(natoms))
+        rows,cols = (min(10,l),min(10,l))
+        patches = []
+        for i in range(natoms):
+            patches += [self.patches[maxidx[i]]]
+        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+        #for i,j in np.ndindex(rows,cols):
+        for idx,ax in np.ndenumerate(axis):
+            try:
+                i = idx[0]
+            except IndexError:
+                i = 0
+            try:
+                j = idx[1]
+            except IndexError:
+                j = 0                
+            ax.set_axis_off()
+            ax.imshow(patches[cols*i + j],interpolation='nearest')
+        if savefile is None:
+            plt.show()
+        else:
+            plt.savefig(savefile)
 
+            
     def show_dict_patches(self,shape=None,patch_shape=None,savefile=None):
         if patch_shape is None:
             s = int(np.sqrt(self.atom_dim))
@@ -1048,14 +1103,46 @@ class spectral_clustering(Cluster):
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         
 class hierarchical_dict(Oc_Dict):
-    def __init__(self,clustering,patch_list):
+
+    def __init__(self,clustering,patch_list,dicttype):
         self.clustering = clustering
         self.patches = patch_list
+        self.patch_size = self.patches[0].shape
         self.npatches = len(patch_list)
+        self.dicttype = dicttype
         self.compute()
         Oc_Dict.__init__(self,self.matrix)
-        
+
     def _compute(self,normalize=True):
+        self._compute_centroids(normalize)
+        self._compute_haar(normalize)
+
+    def set_dicttype(self, dtype):
+        self.dicttype = dtype
+        if self.dicttype == 'haar':
+            self.matrix = self.haar_matrix
+            self.normalization_coefficients = self.haar_normalization_coefficients
+            self.dictelements = self.haar_dictelements
+        elif self.dicttype == 'centroids':
+            self.matrix = self.centroid_matrix
+            self.normalization_coefficients = self.centroid_normalization_coefficients
+            self.dictelements = self.centroid_dictelements
+        else:
+            raise Exception("dicttype must be either 'haar' or 'centroids'")
+        self.cardinality = len(self.dictelements)
+        
+    def _compute_centroids(self, normalize=True):
+        leafs = self.clustering.leafs
+        ga = (1/self.npatches)*sum(self.patches[1:],self.patches[0])
+        if normalize:
+            ga /= np.linalg.norm(ga)
+        dictelements = [ga] #global average
+        for l in leafs:
+            centroid = sum([self.patches[i] for i in l.samples_idx[1:]],self.patches[l.samples_idx[0]])
+            dictelements += [centroid]
+        self.centroid_dictelements = dictelements
+
+    def _compute_haar(self,normalize=True):
         root_node = self.clustering.root_node
         tovisit = [root_node]
         ga = (1/self.npatches)*sum(self.patches[1:],self.patches[0])
@@ -1088,14 +1175,16 @@ class hierarchical_dict(Oc_Dict):
                 tovisit = [lnode] + tovisit
             if rnode.children is not None:
                 tovisit = [rnode] + tovisit
-        self.dictelements = dictelements
+        self.haar_dictelements = dictelements
 
+        
 class ksvd_dict(Oc_Dict):
     """Computes dictionary using KSVD method."""
     
     def __init__(self,patch_list,dictsize,sparsity,maxiter=8,implementation='ksvdbox'):
         self.patches = patch_list
         self.npatches = len(patch_list)
+        self.patch_size = self.patches[0].shape
         self.dictsize = dictsize
         self.sparsity = sparsity
         self.maxiter = maxiter
