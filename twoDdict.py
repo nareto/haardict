@@ -503,8 +503,12 @@ class Cluster(Saveable):
         nextn = cur.children[int(revid.pop())]
         while len(revid) >= 1:
             cur = nextn
-            nextn = cur.children[int(revid.pop())]
-        
+            try:
+                nextn = cur.children[int(revid.pop())]
+            except TypeError:
+                raise Exception('revid string is too long')
+        return(nextn)
+    
     def subtree(self,startingnode): #TODO: test method
         patches = []
         curn = self.root_node
