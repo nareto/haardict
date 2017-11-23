@@ -497,6 +497,14 @@ class Cluster(Saveable):
     def compute(self):
         self._cluster()
 
+    def get_node(self,idstr):
+        revid = list(idstr[::-1])
+        cur = self.root_node
+        nextn = cur.children[int(revid.pop())]
+        while len(revid) >= 1:
+            cur = nextn
+            nextn = cur.children[int(revid.pop())]
+        
     def subtree(self,startingnode): #TODO: test method
         patches = []
         curn = self.root_node
@@ -584,7 +592,7 @@ class Oc_Dict(Saveable):
         self._compute()
         self._matrix_from_patch_list(self)
 
-    def min_dissimilarities(self,dissimilarity='euclidean'):
+    def min_dissimilarities(self,dissimilarity='euclidean',progress=True):
         """Computes self.min_diss, array of minimum dissimilarities from dictionary atoms to input patches"""
         
         if dissimilarity == 'haarpsi':
@@ -595,15 +603,16 @@ class Oc_Dict(Saveable):
             diss = diss_emd(self.patch_size)
         min_diss = []
         counter = 0
-        print('Computing minimum dissimilarities with dissimilarity measure: %s' % (dissimilarity))
+        if progress:
+            print('Computing minimum dissimilarities with dissimilarity measure: %s' % (dissimilarity))
         for d in self.dictelements:
             md = diss(d,self.patches[0])
             for p in self.patches:
-                print('\r%d/%d' % (counter + 1,len(self.patches)*self.cardinality), sep=' ',end='',flush=True)
+                if progress:
+                    print('\r%d/%d' % (counter + 1,len(self.patches)*self.cardinality), sep=' ',end='',flush=True)
                 md = min(md,diss(d,p))
                 counter += 1
             min_diss.append(md)
-        print('\n')
         self.min_diss = min_diss
     
     def mutual_coherence(self,progress=True):
@@ -986,6 +995,7 @@ class spectral_clustering(Cluster):
             self._cluster_scikit()
         elif self.implementation == 'explicit':
             self._cluster_explicit()
+        self.affinity_matrix_nonzero_perc = len(self.affinity_matrix.data)/len(self.samples)**2
 
     def _cluster_scikit(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)

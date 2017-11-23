@@ -9,7 +9,7 @@ np.random.seed(123)
 save = True
 
 figures = True
-testid = 'flowers'
+testid = 'flowers500-8x8'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
 save_prefix = '/Users/renato/nextcloud/phd/jimg/'+date+'-'+testid
@@ -23,18 +23,19 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #codeimg = 'img/flowers_pool-small.npy'
 #patch_size = (16,16)
 #patch_size = (24,24)
+#patch_size = (32,32)
 patch_size = (8,8)
-npatches = None
-#npatches = 50
+#npatches = None
+npatches = 500
 sparsity = 2
 meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
-clust = '2means'
-#clust = 'spectral'
+#clust = '2means'
+clust = 'spectral'
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 1e-4
-cluster_epsilon = 8
+cluster_epsilon = 1e-4
 spectral_dissimilarity = 'haarpsi'
 #spectral_dissimilarity = 'emd'
 #spectral_dissimilarity = 'euclidean'
@@ -52,7 +53,7 @@ rec_transf = None
 #rec_transf = 'wavelet_packet'
 mc = None
 compute_mutual_coherence = True
-ksvd_cardinality = 6
+ksvd_cardinality = 427
 
 
 ### LEARNING ###
@@ -106,9 +107,9 @@ def print_test_parameters(dictionary,elapsed_time):
         if learn_transf is not '2dpca':
             desc_string += ' - %s' % wav
     if meth == '2ddict':
-        desc_string += '\nClustering method: %s \nCluster epsilon: %f' % (clust,cluster_epsilon)
+        desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
         if clust == 'spectral':
-            desc_string += '\nSpectral dissimilarity measure: %s' % (spectral_dissimilarity)
+            desc_string += '\nSpectral dissimilarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_dissimilarity,dictionary.clustering.affinity_matrix_nonzero_perc)
     if rec_transf is not None:
         desc_string += '\nReconstruction transform: %s' % (rec_transf)
 
@@ -201,16 +202,15 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
         print(orgmode_str)
         for diss in ['euclidean','haarpsi','emd']:
             fig = plt.figure()
-            dictionary.min_dissimilarities(diss)
+            dictionary.min_dissimilarities(diss,False)
             plt.hist(dictionary.min_diss)
             savepath = basesavepath+'-mindiss_%s'%(diss)+'.png'
-            orgmode_str = '[[file:%s]]\n\n' % savepath
+            orgmode_str = '[[file:%s]]' % savepath
             if save:
                 fig.savefig(savepath)
             fig.clear()
             plt.close()
             print(orgmode_str)
-
 
 if __name__ == '__main__':
     main()
