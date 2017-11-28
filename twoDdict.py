@@ -409,9 +409,8 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     #dictionary.compute()
     return(dictionary)
 
-def reconstruct(oc_dict,imgpath,sparsity=5,transform=None,wav_lev=3,wavelet='haar'):
+def reconstruct(oc_dict,imgpath,psize,sparsity=5,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,wavelet='haar'):
     clip = False
-    psize = oc_dict.patches[0].shape
     spars= sparsity
     img = np_or_img_to_array(imgpath,psize)
     patches = extract_patches(img,psize)
@@ -883,7 +882,7 @@ class monkey_clustering(Cluster):
 class twomeans_clustering(Cluster):
     """Clusters data using recursive 2-means"""
 
-    def __init__(self,samples,epsilon,minsamples=5):
+    def __init__(self,samples,epsilon,minsamples=3):
         Cluster.__init__(self,samples)
         self.epsilon = epsilon
         self.minsamples = minsamples
@@ -929,7 +928,7 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold_perc=0.4,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold_perc=0.4,minsamples=3,implementation='explicit'):
         """	samples: patches to cluster
     		dissimilarity: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node
@@ -1071,8 +1070,10 @@ class spectral_clustering(Cluster):
             den = float(y.T.dot(D).dot(y))
             return(num/den)
 
+        self.idstr = []
         while len(tovisit) > 0:
             cur = tovisit.pop()
+            self.idstr.append(cur.idstr)
             lsamples_idx = []
             rsamples_idx = []
             aff_mat = self.affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
@@ -1101,17 +1102,17 @@ class spectral_clustering(Cluster):
             #print("Ncut = ", ncutval)]
             leftaffmatnorm = np.linalg.norm(self.affinity_matrix[lsamples_idx,:][:,lsamples_idx].todense())
             rightaffmatnorm = np.linalg.norm(self.affinity_matrix[rsamples_idx,:][:,rsamples_idx].todense())
-            if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0:
+            if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0 and len(lsamples_idx) > self.minsamples and len(rsamples_idx) > self.minsamples:
+            #if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0 and cur.nsamples > self.minsamples:
                 lnode = Node(lsamples_idx,cur,True)
                 rnode = Node(rsamples_idx,cur,False)
                 cur.children = (lnode,rnode)
                 depth = max((depth,lnode.depth,rnode.depth))
                 self.egvecs.append((depth,vec,isinleftcluster))
-                if len(lsamples_idx) > self.minsamples:
-                    tovisit = [lnode] + tovisit
-                if len(rsamples_idx) > self.minsamples:
-                    tovisit = [rnode] + tovisit
-            if cur.children is None:
+                tovisit = [lnode] + tovisit
+                tovisit = [rnode] + tovisit
+            #if cur.children is None:
+            else:
                 self.leafs.append(cur)
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth

@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import datetime as dt
 
-np.random.seed(123)
+#np.random.seed(123)
     
 plot = False
 #learnimg = 'img/flowers_pool.cr2'
@@ -17,18 +17,18 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #patch_size = (16,16)
 #patch_size = (24,24)
 patch_size = (8,8)
-#npatches = None
-npatches = 50
+npatches = None
+#npatches = 50
 sparsity = 2
 meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
-#clust = '2means'
-clust = 'spectral'
+clust = '2means'
+#clust = 'spectral'
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 1e-4
 #cluster_epsilon = 8e4 #for 2means on 8x8 patches -> 42 dict card
-cluster_epsilon = 1e-4
+cluster_epsilon = 8
 spectral_dissimilarity = 'haarpsi'
 #spectral_dissimilarity = 'emd'
 #spectral_dissimilarity = 'euclidean'
@@ -38,12 +38,13 @@ spectral_dissimilarity = 'haarpsi'
 wav = 'haar'
 wavlev = 1
 #learn_transf = 'wavelet_packet'
-#learn_transf = '2dpca'
-learn_transf = None
+learn_transf = '2dpca'
+#learn_transf = None
 tdpcal,tdpcar = 4,4
-rec_transf = None
+#rec_transf = None
 #rec_transf = 'wavelet'
 #rec_transf = 'wavelet_packet'
+#rec_transf = '2dpca'
 mc = None
 compute_mutual_coherence = True
 ksvd_cardinality = 60
@@ -70,7 +71,7 @@ try:
     tic()
 except:
     pass
-rec,coefs = reconstruct(dictionary,codeimg,sparsity,rec_transf,wavelet=wav,wav_lev=wavlev)
+rec,coefs = reconstruct(dictionary,codeimg,sparsity,rec_transf,twodpca_l=tdpcal,twodpca_r=tdpcar,wavelet=wav,wav_lev=wavlev)
 try:
     print('Reconstructed image in %f seconds' % toc(0))
 except:
