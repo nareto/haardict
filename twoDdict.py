@@ -306,6 +306,18 @@ def assemble_patches(patches,out_size):
             idx += 1
     return(out)
     
+def low_rank_approx(svdtuple=None, A=None, r=1):
+    """
+    Returns r-rank approximation of matrix A given by its SVD
+    """
+    if svdtuple is None:
+        svdtuple = np.linalg.svd(A, full_matrices=False)
+    u, s, v = svdtuple
+    ret = np.zeros((u.shape[0],v.shape[1]))
+    for i in range(r):
+        ret += s[i] * np.outer(u.T[i], v[i])
+    return(ret)
+
 def covariance_matrix(patches):
     """Computes generalized covariance matrix of arrays in patches"""
 
