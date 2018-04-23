@@ -318,6 +318,56 @@ def low_rank_approx(svdtuple=None, A=None, r=1):
         ret += s[i] * np.outer(u.T[i], v[i])
     return(ret)
 
+def affinity_matrix(samples,dissimilarity_measure,threshold):
+    """Returns sparse matrix representation of matrix of pairwise dissimilarities, keeping only the pairwise dissimilarities that are below the given threshold"""
+
+    nsamples = len(samples)
+    print('Computing affinity matrix...')
+
+    data = []
+    rows = []
+    cols = []
+    counter = 0
+    for i,j in itertools.combinations(range(nsamples),2):
+        print('\r%d/%d' % (counter + 1,nsamples*(nsamples-1)/2), sep=' ',end='',flush=True)
+        d = dissimilarity_measure(samples[i], samples[j])
+        if d < threshold:
+            data.append(d)
+            rows.append(i)
+            cols.append(j)
+        counter += 1
+    print('%.2f percentage of the dissimilarities was below the threshold' % (len(data)/len(samples)))
+    data = np.array(data)
+    #data,rows,cols = _compute_diss_rows_cols(diss)
+    #thresholded_data = data.copy()
+    #data.sort()
+    #thresh = data[int(affinity_matrix_threshold_perc*len(data))]
+    #removed = 0
+    #for i,d in enumerate(data):
+    #    if d > thresh:
+    #        idx = i-removed
+    #        thresholded_data = thresholded_data[:idx] + thresholded_data[idx+1:]
+    #        rows = rows[:idx] + rows[idx+1:]
+    #        cols = cols[:idx] + cols[idx+1:]
+    #        removed += 1
+    #data = np.array(thresholded_data)
+    #diss_data = data
+    #avgd = data.mean()
+    #vard = np.sqrt(data.var())
+    #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER*_MAX_SIGNIFICATIVE_MACHINE_NUMBER))/(2*(avgd - 5*vard))
+    #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER))/(avgd - 3*vard)
+    #print('\navgd = %f\n vard = %f\n beta = %f' % (avgd,vard,beta))
+    data /= data.max()
+    beta = 4
+    exp_data = np.exp(-beta*data)
+    expaff_mat = csr_matrix((exp_data,(rows,cols)),shape=(nsamples,nsamples))
+    print('...done')
+    expaff_mat = expaff_mat + expaff_mat.transpose()
+    #affinity_matrix = expaff_mat
+    #print(len(affinity_matrix.data)/(affinity_matrix.shap
+    return(expaff_mat)
+    
+
 def covariance_matrix(patches):
     """Computes generalized covariance matrix of arrays in patches"""
 
@@ -348,7 +398,7 @@ def np_or_img_to_array(path,crop_to_patchsize=None):
     return(ret)
 
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -366,6 +416,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
     spectral_dissimilarity: dissimilarity measure used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
+    affinity_matrix_threshold: threshold for pairwise dissimilarities in affinity matrix
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
     wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
     wav_lev: number of levels for the wavelet transform
@@ -407,7 +458,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     elif clustering == '2means':
         cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
     elif clustering == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,dissimilarity=spectral_dissimilarity)    
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,dissimilarity=spectral_dissimilarity,affinity_matrix_threshold=affinity_matrix_threshold)    
     cluster_instance.compute()
 
     #BUILD DICT
@@ -940,35 +991,21 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold_perc=0.4,minsamples=3,implementation='explicit'):
+    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold,minsamples=3,implementation='explicit'):
         """	samples: patches to cluster
     		dissimilarity: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node
-        	affinity_matrix_threshold_perc: percentage of nonzero elements in affinity matrix"""
+        	affinity_matrix_threshold: threshold for affinity_matrix dissimilarities. Heavily depends on chosen dissimilarity measure"""
         
         Cluster.__init__(self,samples)
         self.dissimilarity = dissimilarity
-        self.affinity_matrix_threshold_perc = affinity_matrix_threshold_perc
+        self.affinity_matrix_threshold = affinity_matrix_threshold
         self.patch_size = self.samples[0].shape
         self.epsilon = epsilon
         self.minsamples = minsamples
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
-    def _compute_diss_rows_cols(self, diss):
-        data = []
-        rows = []
-        cols = []
-        counter = 0
-        for i,j in itertools.combinations(range(self.nsamples),2):
-            print('\r%d/%d' % (counter + 1,self.nsamples*(self.nsamples-1)/2), sep=' ',end='',flush=True)
-            d = diss(self.samples[i], self.samples[j])
-            data.append(d)
-            rows.append(i)
-            cols.append(j)
-            counter += 1
-        return(data,rows,cols)        
-    
     def _compute_affinity_matrix(self):
         if self.dissimilarity == 'haarpsi':
             diss = diss_haarpsi(1)
@@ -976,33 +1013,8 @@ class spectral_clustering(Cluster):
             diss = diss_euclidean()
         elif self.dissimilarity == 'emd':
             diss  = diss_emd(self.patch_size)
-        print('Computing affinity matrix...')
-        data,rows,cols = self._compute_diss_rows_cols(diss)
-        thresholded_data = data.copy()
-        data.sort()
-        thresh = data[int(self.affinity_matrix_threshold_perc*len(data))]
-        removed = 0
-        for i,d in enumerate(data):
-            if d > thresh:
-                idx = i-removed
-                thresholded_data = thresholded_data[:idx] + thresholded_data[idx+1:]
-                rows = rows[:idx] + rows[idx+1:]
-                cols = cols[:idx] + cols[idx+1:]
-                removed += 1
-        data = np.array(thresholded_data)
-        self.diss_data = data
-        #avgd = data.mean()
-        #vard = np.sqrt(data.var())
-        #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER*_MAX_SIGNIFICATIVE_MACHINE_NUMBER))/(2*(avgd - 5*vard))
-        #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER))/(avgd - 3*vard)
-        #print('\navgd = %f\n vard = %f\n beta = %f' % (avgd,vard,beta))
-        data /= data.max()
-        beta = 4
-        exp_data = np.exp(-beta*data)
-        expaff_mat = csr_matrix((exp_data,(rows,cols)),shape=(self.nsamples,self.nsamples))
-        print('...done')
-        expaff_mat = expaff_mat + expaff_mat.transpose()
-        self.affinity_matrix = expaff_mat
+
+        self.affinity_matrix = affinity_matrix(self.samples,diss,self.affinity_matrix_threshold)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
         
     def _cluster(self):
@@ -1128,6 +1140,23 @@ class spectral_clustering(Cluster):
                 self.leafs.append(cur)
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+
+class felzenszwalb_huttenlocher_clustering(Cluster):
+    """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
+
+    def __init__(self,samples,epsilon,minsamples=3):
+        Cluster.__init__(self,samples)
+        self.epsilon = epsilon
+        self.minsamples = minsamples
+        #self.cluster_matrix = patches2matrix(self.samples).transpose()
+
+    def _cluster(self):
+        pass
+
+        
+        
+
+        
         
 class hierarchical_dict(Oc_Dict):
 

@@ -4,15 +4,17 @@ import matplotlib.pyplot as plt
 import datetime as dt
 import copy
 
-#np.random.seed(123)
+np.random.seed(123)
 
-save = False
+#save = False
+save = True
 
 figures = True
 testid = 'flowers-transf'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
-save_prefix = '/Users/renato/nextcloud/phd/jimg/'+date+'-'+testid
+#save_prefix = '/Users/renato/nextcloud/phd/jimg/'+date+'-'+testid
+save_prefix = '/home/renato/tmp/jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
 learnimg = 'img/flowers_pool-rescale.npy'
@@ -25,35 +27,40 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #patch_size = (24,24)
 #patch_size = (32,32)
 patch_size = (8,8)
-npatches = None
-#npatches = 500
+#npatches = None
+npatches = 500
 sparsity = 2
 meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
-clust = '2means'
-#clust = 'spectral'
+#clust = '2means'
+clust = 'spectral'
+
+#SPECTRAL CLUSTERING
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 1e-4
-#cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
+cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
+#cluster_epsilon = 8
 #spectral_dissimilarity = 'haarpsi'
 #spectral_dissimilarity = 'emd'
 spectral_dissimilarity = 'euclidean'
-cluster_epsilon = 8
+affinity_matrix_threshold = 10
+
+#TRANSFORMS
 #learn_transf = 'wavelet'
+#learn_transf = 'wavelet'
+#learn_transf = 'wavelet_packet'
+#learn_transf = '2dpca'
+learn_transf = None
 #wav = 'db2'
 wav = 'haar'
 wavlev = 1
-#learn_transf = 'wavelet'
-#learn_transf = 'wavelet_packet'
-learn_transf = '2dpca'
-#learn_transf = None
 tdpcal,tdpcar = 4,4
-#rec_transf = None
+rec_transf = None
 #rec_transf = 'wavelet'
 #rec_transf = 'wavelet_packet'
-rec_transf = '2dpca'
+#rec_transf = '2dpca'
 mc = None
 compute_mutual_coherence = True
 ksvd_cardinality = 61
@@ -67,10 +74,21 @@ dwtd = False
 if rec_transf is not None:
     dwtd = True
 
+last_tic = dt.datetime.now()
+
+def tic():
+    global last_tic
+    last_tic = dt.datetime.now()
+
+def toc(arg):
+    global last_tic
+    dtobj = dt.datetime.now() - last_tic
+    return(dtobj.seconds)
+    
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
     tic()
-    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_dissimilarity=spectral_dissimilarity,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
+    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_dissimilarity=spectral_dissimilarity,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
     elapsed_time = toc(0)
 
     print('Learned dictionary in %f seconds' % elapsed_time)
@@ -85,7 +103,7 @@ def main():
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')    
         #tic()
-        rec2,coefs2 = reconstruct(dictionary2,codeimg,sparsity,rec_transf,wavelet=wav,wav_lev=wavlev)
+        rec2,coefs2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,rec_transf,wavelet=wav,wav_lev=wavlev)
         #print('Reconstructed image in %f seconds' % toc(0))
         #rec = rescale(rec,True)
         print_rec_results(dictionary2,img,rec2,coefs2,False)
