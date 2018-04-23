@@ -556,6 +556,17 @@ class Cluster(Saveable):
         self.nsamples = len(samples)
         self.root_node = None
 
+    def _compute_affinity_matrix(self):
+        if self.dissimilarity == 'haarpsi':
+            diss = diss_haarpsi(1)
+        elif self.dissimilarity == 'euclidean':
+            diss = diss_euclidean()
+        elif self.dissimilarity == 'emd':
+            diss  = diss_emd(self.patch_size)
+
+        self.affinity_matrix = affinity_matrix(self.samples,diss,self.affinity_matrix_threshold)
+        #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
+
     def compute(self):
         self._cluster()
 
@@ -1006,16 +1017,6 @@ class spectral_clustering(Cluster):
         self.implementation = implementation
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
-    def _compute_affinity_matrix(self):
-        if self.dissimilarity == 'haarpsi':
-            diss = diss_haarpsi(1)
-        elif self.dissimilarity == 'euclidean':
-            diss = diss_euclidean()
-        elif self.dissimilarity == 'emd':
-            diss  = diss_emd(self.patch_size)
-
-        self.affinity_matrix = affinity_matrix(self.samples,diss,self.affinity_matrix_threshold)
-        #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
         
     def _cluster(self):
         if self.implementation == 'scikit':
@@ -1151,6 +1152,16 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
         #self.cluster_matrix = patches2matrix(self.samples).transpose()
 
     def _cluster(self):
+        #E = G.edges(data="weight")
+	#E = sorted(E, key=lambda x: x[2])
+	#seg = NilsSegmentation(len(V), k=k)
+	#for e in E:
+	#	(v1, v2, w) = e
+	#	i = V.index(v1)
+	#	j = V.index(v2)
+	#	if w <= seg.MInt(i, j):
+	#		seg.union(i, j, weight=w)
+	#return(seg)
         pass
 
         
