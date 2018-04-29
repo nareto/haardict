@@ -662,22 +662,11 @@ class Oc_Dict(Saveable):
         if patches_dim is not None:
             self.twod_dict = True
 
-    def _matrix_from_patch_list(self,normalize=True):
-        if type(self).__name__ == 'hierarchical_dict':
-            self.centroid_matrix = np.vstack([x.flatten() for x in self.centroid_dictelements]).transpose()
-            self.centroid_matrix,self.centroid_normalization_coefficients = normalize_matrix(self.centroid_matrix)
-            self.haar_matrix = np.vstack([x.flatten() for x in self.haar_dictelements]).transpose()
-            self.haar_matrix,self.haar_normalization_coefficients = normalize_matrix(self.haar_matrix)
-            self.set_dicttype(self.dicttype)
-        else:
-            self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
-            self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
-
-
     def compute(self):
         #self.compute_dictelements()
         self._compute()
-        self._matrix_from_patch_list(self)
+        self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
+        self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
 
     def min_dissimilarities(self,dissimilarity='euclidean',progress=True):
         """Computes self.min_diss, array of minimum dissimilarities from dictionary atoms to input patches"""
@@ -827,8 +816,8 @@ class Oc_Dict(Saveable):
             l = int(np.sqrt(self.cardinality))
             shape = (min(10,l),min(10,l))
         rows,cols = shape
-        if not hasattr(self,'atom_patches'):
-            self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
+        #if not hasattr(self,'atom_patches'):
+        self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
         self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         #for i,j in np.ndindex(rows,cols):
@@ -966,7 +955,7 @@ class monkey_clustering(Cluster):
 class twomeans_clustering(Cluster):
     """Clusters data using recursive 2-means"""
 
-    def __init__(self,samples,epsilon,minsamples=3):
+    def __init__(self,samples,epsilon,minsamples=5):
         Cluster.__init__(self,samples)
         self.epsilon = epsilon
         self.minsamples = minsamples
@@ -1053,7 +1042,7 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold,minsamples=3,implementation='explicit'):
+    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
     		dissimilarity: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node
@@ -1176,19 +1165,21 @@ class spectral_clustering(Cluster):
             #if np.linalg.norm(aff_mat[1:,1:].todense()) == 0:
             #    ipdb.set_trace()
             #print("Ncut = ", ncutval)]
-            leftaffmatnorm = np.linalg.norm(self.affinity_matrix[lsamples_idx,:][:,lsamples_idx].todense())
-            rightaffmatnorm = np.linalg.norm(self.affinity_matrix[rsamples_idx,:][:,rsamples_idx].todense())
-            if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0 and len(lsamples_idx) > self.minsamples and len(rsamples_idx) > self.minsamples:
+            #leftaffmatnorm = np.linalg.norm(self.affinity_matrix[lsamples_idx,:][:,lsamples_idx].todense())
+            #rightaffmatnorm = np.linalg.norm(self.affinity_matrix[rsamples_idx,:][:,rsamples_idx].todense())
+            #if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0:
             #if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0 and cur.nsamples > self.minsamples:
+            if ncutval > self.epsilon and len(lsamples_idx) > 0 and len(rsamples_idx) > 0:
                 lnode = Node(lsamples_idx,cur,True)
                 rnode = Node(rsamples_idx,cur,False)
                 cur.children = (lnode,rnode)
                 depth = max((depth,lnode.depth,rnode.depth))
                 self.egvecs.append((depth,vec,isinleftcluster))
-                tovisit = [lnode] + tovisit
-                tovisit = [rnode] + tovisit
-            #if cur.children is None:
-            else:
+                if len(lsamples_idx) > self.minsamples:
+                    tovisit = [lnode] + tovisit
+                if len(rsamples_idx) > self.minsamples:
+                    tovisit = [rnode] + tovisit
+            if cur.children is None:
                 self.leafs.append(cur)
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
@@ -1234,7 +1225,8 @@ class hierarchical_dict(Oc_Dict):
     def _compute(self,normalize=True):
         self._compute_centroids(normalize)
         self._compute_haar(normalize)
-
+        self.set_dicttype('haar') #set default dicttype
+        
     def set_dicttype(self, dtype):
         self.dicttype = dtype
         if self.dicttype == 'haar':
@@ -1259,6 +1251,9 @@ class hierarchical_dict(Oc_Dict):
             centroid = sum([self.patches[i] for i in l.samples_idx[1:]],self.patches[l.samples_idx[0]])
             dictelements += [centroid]
         self.centroid_dictelements = dictelements
+        self.centroid_matrix = np.vstack([x.flatten() for x in self.centroid_dictelements]).transpose()
+        self.centroid_matrix,self.centroid_normalization_coefficients = normalize_matrix(self.centroid_matrix)
+        
 
     def _compute_haar(self,normalize=True):
         root_node = self.clustering.root_node
@@ -1294,6 +1289,9 @@ class hierarchical_dict(Oc_Dict):
             if rnode.children is not None:
                 tovisit = [rnode] + tovisit
         self.haar_dictelements = dictelements
+        self.haar_matrix = np.vstack([x.flatten() for x in self.haar_dictelements]).transpose()
+        self.haar_matrix,self.haar_normalization_coefficients = normalize_matrix(self.haar_matrix)
+        
 
         
 class ksvd_dict(Oc_Dict):
