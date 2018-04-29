@@ -10,6 +10,7 @@ import skimage.io
 import skimage.color
 import skimage.filters as filters
 import scipy.sparse
+from scipy.spatial.distance import pdist
 import pyemd
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
@@ -111,9 +112,14 @@ def HaarPSI_octave(img1,img2):
     return(haarpsi)
 
 #dissimilarity measures 
-def diss_haarpsi(scaling=1):
-    ret = lambda patch1,patch2: scaling*(1 - haar_psi(255*patch1,255*patch2)[0])
-    return(ret)
+def diss_haarpsi(scaling=1,reshape=False):
+    diss = lambda patch1,patch2: scaling*(1 - haar_psi(255*patch1,255*patch2)[0])
+    def dh(p1,p2):
+        if reshape is not False:
+            p1 = p1.reshape(reshape)
+            p2 = p2.reshape(reshape)
+        return(diss(p1,p2))
+    return(dh)
 
 def diss_euclidean():
     ret = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
@@ -317,6 +323,10 @@ def low_rank_approx(svdtuple=None, A=None, r=1):
     for i in range(r):
         ret += s[i] * np.outer(u.T[i], v[i])
     return(ret)
+
+def affinity_matrix2(samples,dissimilarity,threshold):
+    X = patches2matrix(samples).T
+    return(pdist(X,dissimilarity))
 
 def affinity_matrix(samples,dissimilarity_measure,threshold):
     """Returns sparse matrix representation of matrix of pairwise dissimilarities, keeping only the pairwise dissimilarities that are below the given threshold"""
@@ -964,6 +974,10 @@ class twomeans_clustering(Cluster):
 
     #@profile
     def _cluster(self):
+        self._cluster_orig()
+        #self._cluster_new()
+        
+    def _cluster_orig(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -999,6 +1013,43 @@ class twomeans_clustering(Cluster):
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
 
+    def _cluster_new(self):
+        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
+        tovisit = []
+        tovisit.append(self.root_node)
+        self.leafs = []
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
+        depth = 0
+        self.wcss = []
+        while len(tovisit) > 0:
+            cur = tovisit.pop()
+            centroid = (sum([ line for line in self.cluster_matrix[np.array(cur.samples_idx)]]))/cur.nsamples
+            var = sum([np.linalg.norm(p-centroid) for p in self.cluster_matrix[np.array(cur.samples_idx)]])/cur.nsamples
+            if cur.nsamples > self.minsamples and var > self.epsilon:
+                #km_instance = KMeans(n_clusters=2,n_jobs=-1)
+                km_instance = KMeans(n_clusters=2,tol=0.1)
+                km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
+                self.wcss.append(km.inertia_)
+                lsamples_idx = []
+                rsamples_idx = []
+                for k,label in enumerate(km.labels_):
+                    if label == 0:
+                        lsamples_idx.append(cur.samples_idx[k])
+                    if label == 1:
+                        rsamples_idx.append(cur.samples_idx[k])
+                lnode = Node(lsamples_idx,cur,True)
+                rnode = Node(rsamples_idx,cur,False)
+                cur.children = (lnode,rnode)
+                tovisit = [lnode] + tovisit
+                tovisit = [rnode] + tovisit
+                depth = max((depth,lnode.depth,rnode.depth))
+            else:
+                self.leafs.append(cur)
+        self.tree_depth = depth
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
@@ -1258,6 +1309,7 @@ class ksvd_dict(Oc_Dict):
         self.implementation = implementation
         from oct2py import octave
         self.octave = octave
+        self.octave.addpath('ksvdbox/')
         self.octave.addpath('ompbox/')
         self.octave.addpath(implementation+'/')
         self.compute()
@@ -1297,6 +1349,7 @@ class ksvd_dict(Oc_Dict):
         #[D,X] = self.octave.ksvd(params)
         print('Computing ksvd...')
         [D,X] = self.octave.ksvd(params)
+        #[D,X] = octave.ksvd(params)
         print('Done...')
         #[D,X] = self.oc.eval('ksvdparams)
         self.encoding = X

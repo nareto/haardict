@@ -1,8 +1,8 @@
 from twoDdict import *
 import numpy as np
 import matplotlib.pyplot as plt
-import datetime as dt
 import copy
+import datetime as dt
 
 np.random.seed(123)
 
@@ -27,26 +27,27 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #patch_size = (24,24)
 #patch_size = (32,32)
 patch_size = (8,8)
-#npatches = None
-npatches = 500
+npatches = None
+#npatches = 500
 sparsity = 2
-meth = '2ddict'
-#meth = 'ksvd'
+#meth = '2ddict'
+meth = 'ksvd'
 #test_meths = ['ksvd']
-#clust = '2means'
-clust = 'spectral'
+clust = '2means'
+#clust = 'spectral'
 
-#SPECTRAL CLUSTERING
+
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 1e-4
-cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
+#cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
-#cluster_epsilon = 8
+cluster_epsilon = 500
+
+#SPECTRAL CLUSTERING
 #spectral_dissimilarity = 'haarpsi'
 #spectral_dissimilarity = 'emd'
 spectral_dissimilarity = 'euclidean'
 affinity_matrix_threshold = 10
-
 #TRANSFORMS
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet'
@@ -63,8 +64,8 @@ rec_transf = None
 #rec_transf = '2dpca'
 mc = None
 compute_mutual_coherence = True
-ksvd_cardinality = 61
 
+ksvd_cardinality = 25
 
 ### LEARNING ###
 ksvd_sparsity = sparsity
@@ -74,17 +75,17 @@ dwtd = False
 if rec_transf is not None:
     dwtd = True
 
-last_tic = dt.datetime.now()
-
-def tic():
-    global last_tic
-    last_tic = dt.datetime.now()
-
-def toc(arg):
-    global last_tic
-    dtobj = dt.datetime.now() - last_tic
-    return(dtobj.seconds)
-    
+# last_tic = dt.datetime.now()
+# 
+# def tic():
+#     global last_tic
+#     last_tic = dt.datetime.now()
+# 
+# def toc(arg):
+#     global last_tic
+#     dtobj = dt.datetime.now() - last_tic
+#     return(dtobj.seconds)
+#     
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
     tic()
