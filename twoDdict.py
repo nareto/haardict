@@ -784,11 +784,14 @@ class Oc_Dict(Saveable):
     def show_most_used_atoms(self,coefs,natoms = 100,savefile=None):
         probs = atoms_prob(coefs)
         maxidx = probs.argsort()[::-1]
-        l = int(np.sqrt(natoms))
-        rows,cols = (min(10,l),min(10,l))
+        if natoms < 15:
+            rows,cols = (1,natoms)
+        else:
+            l = int(np.sqrt(natoms))
+            rows,cols = (min(10,l),min(10,l))
         patches = []
         for i in range(natoms):
-            patches += [self.patches[maxidx[i]]]
+            patches += [self.dictelements[maxidx[i]]]
         fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
         #for i,j in np.ndindex(rows,cols):
         for idx,ax in np.ndenumerate(axis):
@@ -799,7 +802,10 @@ class Oc_Dict(Saveable):
             try:
                 j = idx[1]
             except IndexError:
-                j = 0                
+                j = 0
+            if len(idx) == 1:
+                i = 0
+                j = idx[0]
             ax.set_axis_off()
             ax.imshow(patches[cols*i + j],interpolation='nearest')
         if savefile is None:
@@ -816,6 +822,8 @@ class Oc_Dict(Saveable):
             l = int(np.sqrt(self.cardinality))
             shape = (min(10,l),min(10,l))
         rows,cols = shape
+        if self.cardinality < 15:
+            rows,cols = (1,self.cardinality)
         #if not hasattr(self,'atom_patches'):
         self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
         self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
@@ -829,7 +837,10 @@ class Oc_Dict(Saveable):
             try:
                 j = idx[1]
             except IndexError:
-                j = 0                
+                j = 0
+            if len(idx) == 1:
+                i = 0
+                j = idx[0]
             ax.set_axis_off()
             ax.imshow(self.atom_patches[cols*i + j],interpolation='nearest')
         if savefile is None:

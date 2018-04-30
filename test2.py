@@ -4,6 +4,19 @@ import matplotlib.pyplot as plt
 import copy
 import datetime as dt
 
+LAST_TIC = dt.datetime.now()
+def tic():
+    global LAST_TIC
+    LAST_TIC = dt.datetime.now()
+
+def toc(printstr=True):
+    global LAST_TIC
+    dtobj = dt.datetime.now() - LAST_TIC
+    ret = dtobj.total_seconds()
+    if printstr:
+        print('%f seconds elapsed' % ret)
+    return(ret)
+
 np.random.seed(123)
 
 #save = False
@@ -13,8 +26,9 @@ figures = True
 testid = 'flowers-transf'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
-#save_prefix = '/Users/renato/nextcloud/phd/jimg/'+date+'-'+testid
-save_prefix = '/home/renato/tmp/jimg/'+date+'-'+testid
+#base_save_dir = '/Users/renato/tmp/'
+base_save_dir = '/Users/renato/nextcloud/phd/'
+save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
 learnimg = 'img/flowers_pool-rescale.npy'
@@ -36,18 +50,20 @@ meth = 'ksvd'
 clust = '2means'
 #clust = 'spectral'
 
+ksvd_cardinality = 3
 
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 1e-4
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
-cluster_epsilon = 500
+cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
 #spectral_dissimilarity = 'haarpsi'
 #spectral_dissimilarity = 'emd'
 spectral_dissimilarity = 'euclidean'
 affinity_matrix_threshold = 10
+
 #TRANSFORMS
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet'
@@ -65,7 +81,6 @@ rec_transf = None
 mc = None
 compute_mutual_coherence = True
 
-ksvd_cardinality = 25
 
 ### LEARNING ###
 ksvd_sparsity = sparsity
@@ -164,58 +179,58 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
 
 
 def print_and_save_figures(dictionary,img,rec,coefs,tag):
-    basesavepath = save_prefix + '-%s-%s' % (meth,tag.rstrip(':'))
-    basesavepath += '-%dx%d' % patch_size
+    savename = save_prefix + '-%s-%s' % (meth,tag.rstrip(':'))
+    savename += '-%dx%d' % patch_size
     if meth == '2ddict':
         if clust == '2means':
-            basesavepath += '-2means'
+            savename += '-2means'
         else:
-            basesavepath += '-spec_%s' % spectral_dissimilarity
+            savename += '-spec_%s' % spectral_dissimilarity
 
-    savepath = basesavepath+'-reconstructed_image.png'
+    recimg = savename+'-reconstructed_image.png'
     plt.imshow(rec)
     if save:
-        plt.savefig(savepath)
+        plt.savefig(base_save_dir+recimg)
     plt.close()
-    orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,savepath)
+    orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,recimg)
     print(orgmode_str)
     if meth == '2ddict' and clust == 'spectral':
         plt.hist(dictionary.clustering.affinity_matrix.data)
-        savepath = basesavepath+'-dissimilarities.png'
+        disshist = savename+'-dissimilarities.png'
         if save:
-            plt.savefig(savepath)
+            plt.savefig(base_save_dir+disshist)
         plt.close()
-        orgmode_str= '**** %s dissimilarity histograms\n[[file:%s]]\n' % (tag,savepath)
+        orgmode_str= '**** %s dissimilarity histograms\n[[file:%s]]\n' % (tag,disshist)
         print(orgmode_str)
-    savepath = basesavepath+'-showdict.png'
-    orgmode_str = '**** %s showdict\n[[file:%s]]\n' % (tag,savepath)
+    dictelements = savename+'-showdict.png'
+    orgmode_str = '**** %s showdict\n[[file:%s]]\n' % (tag,dictelements)
     if save:
-        dictionary.show_dict_patches(savefile=savepath)
+        dictionary.show_dict_patches(savefile=base_save_dir+dictelements)
     print(orgmode_str)
     plt.close()
 
     mostused = min(dictionary.cardinality,50)
-    mostused = int(np.sqrt(mostused))**2
-    savepath = basesavepath+'-mostused.png'
-    orgmode_str = '**** %s %d most used atoms\n[[file:%s]]' % (tag,mostused,savepath)
+    mostusedatoms = savename+'-mostused.png'
+    orgmode_str = '**** %s %d most used atoms\n[[file:%s]]' % (tag,mostused,mostusedatoms)
     if save:
-        dictionary.show_most_used_atoms(coefs,mostused,savefile=savepath)
+        dictionary.show_most_used_atoms(coefs,mostused,savefile=base_save_dir+mostusedatoms)
+    print(orgmode_str)
     plt.close()
 
-    savepath1 = basesavepath+'-atoms_prob.png'
-    orgmode_str = '**** %s atoms prob\n[[file:%s]]\n' % (tag, savepath1)
-    savepath2 = basesavepath+'-atoms_prob-sorted.png'
-    orgmode_str += '[[file:%s]]'% (savepath2)
+    atomsprob1 = savename+'-atoms_prob.png'
+    orgmode_str = '**** %s atoms prob\n[[file:%s]]\n' % (tag, atomsprob1)
+    atomsprob2 = savename+'-atoms_prob-sorted.png'
+    orgmode_str += '[[file:%s]]'% (atomsprob2)
     pr = atoms_prob(coefs)
     plt.plot(pr)
     if save:
-        plt.savefig(savepath1)
+        plt.savefig(base_save_dir+atomsprob1)
     plt.close()
     pr.sort()
     pr = pr[::-1]
     plt.plot(pr)
     if save:
-        plt.savefig(savepath2)
+        plt.savefig(base_save_dir+atomsprob2)
     plt.close()
     print(orgmode_str)
 
@@ -226,10 +241,10 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
             fig = plt.figure()
             dictionary.min_dissimilarities(diss,False)
             plt.hist(dictionary.min_diss)
-            savepath = basesavepath+'-mindiss_%s'%(diss)+'.png'
-            orgmode_str = '[[file:%s]]' % savepath
+            disshist = savename+'-mindiss_%s'%(diss)+'.png'
+            orgmode_str = '[[file:%s]]' % disshist
             if save:
-                fig.savefig(savepath)
+                fig.savefig(base_save_dir+disshist)
             fig.clear()
             plt.close()
             print(orgmode_str)
