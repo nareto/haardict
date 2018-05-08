@@ -1,3 +1,4 @@
+
 import ipdb
 import itertools
 import pickle
@@ -112,20 +113,20 @@ def HaarPSI_octave(img1,img2):
     return(haarpsi)
 
 #dissimilarity measures 
-def diss_haarpsi(scaling=1,reshape=False):
-    diss = lambda patch1,patch2: scaling*(1 - haar_psi(255*patch1,255*patch2)[0])
+def simmeasure_haarpsi(reshape=False):
+    sim_meas = lambda patch1,patch2: haar_psi(255*patch1,255*patch2)[0]
     def dh(p1,p2):
         if reshape is not False:
             p1 = p1.reshape(reshape)
             p2 = p2.reshape(reshape)
-        return(diss(p1,p2))
+        return(sim_meas(p1,p2))
     return(dh)
 
-def diss_euclidean():
+def simmeasure_euclidean():
     ret = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
     return(ret)
 
-def diss_emd(patch_size):
+def simmeasure_emd(patch_size):
     prows,pcols = patch_size
     histlength = prows*pcols
     metric_matrix = np.zeros((histlength,histlength))
@@ -324,12 +325,12 @@ def low_rank_approx(svdtuple=None, A=None, r=1):
         ret += s[i] * np.outer(u.T[i], v[i])
     return(ret)
 
-def affinity_matrix2(samples,dissimilarity,threshold):
+def affinity_matrix2(samples,similarity_measure,threshold):
     X = patches2matrix(samples).T
-    return(pdist(X,dissimilarity))
+    return(pdist(X,similarity_measure))
 
-def affinity_matrix(samples,dissimilarity_measure,threshold):
-    """Returns sparse matrix representation of matrix of pairwise dissimilarities, keeping only the pairwise dissimilarities that are below the given threshold"""
+def affinity_matrix(samples,similarity_measure,threshold):
+    """Returns sparse matrix representation of matrix of pairwise similarities, keeping only the pairwise similarities that are below the given threshold"""
 
     nsamples = len(samples)
     print('Computing affinity matrix...')
@@ -340,13 +341,13 @@ def affinity_matrix(samples,dissimilarity_measure,threshold):
     counter = 0
     for i,j in itertools.combinations(range(nsamples),2):
         print('\r%d/%d' % (counter + 1,nsamples*(nsamples-1)/2), sep=' ',end='',flush=True)
-        d = dissimilarity_measure(samples[i], samples[j])
+        d = similarity_measure(samples[i], samples[j])
         if d < threshold:
             data.append(d)
             rows.append(i)
             cols.append(j)
         counter += 1
-    print('%.2f percentage of the dissimilarities was below the threshold' % (len(data)/len(samples)))
+    print('%.2f percentage of the similarities was below the threshold' % (len(data)/len(samples)))
     data = np.array(data)
     #data,rows,cols = _compute_diss_rows_cols(diss)
     #thresholded_data = data.copy()
@@ -407,8 +408,38 @@ def np_or_img_to_array(path,crop_to_patchsize=None):
         ret = ret[:M-(M%m),:N-(N%n)]
     return(ret)
 
+def show_or_save_patches(patchlist,rows,cols,savefile=None):
+    #fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
+    #fig, axis = plt.subplots(rows,cols,squeeze=True)
+    fig, axis = plt.subplots(rows,cols)
+    for idx,ax in np.ndenumerate(axis):
+        try:
+            i = idx[0]
+        except IndexError:
+            i = 0
+        try:
+            j = idx[1]
+        except IndexError:
+            j = 0
+        if len(idx) == 1:
+            i = 0
+            j = idx[0]
+        ax.set_axis_off()
+        ax.imshow(patchlist[cols*i + j],interpolation='nearest')
+    #hacks to try and get nice subplots
+    #plt.tight_layout(pad=0.1,h_pad=0.1,w_pad=0.1)
+    #plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.1,hspace=0.1)
+    plt.subplots_adjust(left=0.1,right=0.45,bottom=0.1,top=0.9,wspace=0.1,hspace=0.1)
+    #plt.subplot_tool()
+    
+    if savefile is None:
+        plt.show()
+    else:
+        plt.savefig(savefile)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_dissimilarity='haarpsi',affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+
+
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -425,8 +456,8 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
-    spectral_dissimilarity: dissimilarity measure used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
-    affinity_matrix_threshold: threshold for pairwise dissimilarities in affinity matrix
+    spectral_similarity: similarity measure used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
+    affinity_matrix_threshold: threshold for pairwise similarities in affinity matrix
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
     wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
     wav_lev: number of levels for the wavelet transform
@@ -468,7 +499,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     elif clustering == '2means':
         cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
     elif clustering == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,dissimilarity=spectral_dissimilarity,affinity_matrix_threshold=affinity_matrix_threshold)    
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,affinity_matrix_threshold=affinity_matrix_threshold)    
     cluster_instance.compute()
 
     #BUILD DICT
@@ -567,14 +598,14 @@ class Cluster(Saveable):
         self.root_node = None
 
     def _compute_affinity_matrix(self):
-        if self.dissimilarity == 'haarpsi':
-            diss = diss_haarpsi(1)
-        elif self.dissimilarity == 'euclidean':
-            diss = diss_euclidean()
-        elif self.dissimilarity == 'emd':
-            diss  = diss_emd(self.patch_size)
+        if self.similarity_measure == 'haarpsi':
+            sim = simmeasure_haarpsi(1)
+        elif self.similarity_measure == 'euclidean':
+            sim = simmeasure_euclidean()
+        elif self.similarity_measure == 'emd':
+            sim  = simmeasure_emd(self.patch_size)
 
-        self.affinity_matrix = affinity_matrix(self.samples,diss,self.affinity_matrix_threshold)
+        self.affinity_matrix = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
 
     def compute(self):
@@ -668,28 +699,28 @@ class Oc_Dict(Saveable):
         self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
         self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
 
-    def min_dissimilarities(self,dissimilarity='euclidean',progress=True):
-        """Computes self.min_diss, array of minimum dissimilarities from dictionary atoms to input patches"""
+    def max_similarities(self,similarity_measure='euclidean',progress=True):
+        """Computes self.max_sim, array of maximum similarities between dictionary atoms and input patches"""
         
-        if dissimilarity == 'haarpsi':
-            diss = diss_haarpsi(1)
-        elif dissimilarity == 'euclidean':
-            diss = diss_euclidean()
-        elif dissimilarity == 'emd':
-            diss = diss_emd(self.patch_size)
-        min_diss = []
+        if similarity_measure == 'haarpsi':
+            sim = simmeasure_haarpsi(1)
+        elif similarity_measure == 'euclidean':
+            sim = simmeasure_euclidean()
+        elif similarity_measure == 'emd':
+            sim = simmeasure_emd(self.patch_size)
+        max_sim = []
         counter = 0
         if progress:
-            print('Computing minimum dissimilarities with dissimilarity measure: %s' % (dissimilarity))
+            print('Computing minimum similarities with similarity_measure measure: %s' % (similarity_measure))
         for d in self.dictelements:
-            md = diss(d,self.patches[0])
+            md = sim(d,self.patches[0])
             for p in self.patches:
                 if progress:
                     print('\r%d/%d' % (counter + 1,len(self.patches)*self.cardinality), sep=' ',end='',flush=True)
-                md = min(md,diss(d,p))
+                md = min(md,sim(d,p))
                 counter += 1
-            min_diss.append(md)
-        self.min_diss = min_diss
+            max_sim.append(md)
+        self.max_sim = max_sim
     
     def mutual_coherence(self,progress=True):
         self.max_cor = 0
@@ -782,37 +813,17 @@ class Oc_Dict(Saveable):
         return(coef,mean)
 
     def show_most_used_atoms(self,coefs,natoms = 100,savefile=None):
-        probs = atoms_prob(coefs)
-        maxidx = probs.argsort()[::-1]
         if natoms < 15:
             rows,cols = (1,natoms)
         else:
             l = int(np.sqrt(natoms))
             rows,cols = (min(10,l),min(10,l))
         patches = []
+        probs = atoms_prob(coefs)
+        maxidx = probs.argsort()[::-1]
         for i in range(natoms):
             patches += [self.dictelements[maxidx[i]]]
-        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
-        #for i,j in np.ndindex(rows,cols):
-        for idx,ax in np.ndenumerate(axis):
-            try:
-                i = idx[0]
-            except IndexError:
-                i = 0
-            try:
-                j = idx[1]
-            except IndexError:
-                j = 0
-            if len(idx) == 1:
-                i = 0
-                j = idx[0]
-            ax.set_axis_off()
-            ax.imshow(patches[cols*i + j],interpolation='nearest')
-        if savefile is None:
-            plt.show()
-        else:
-            plt.savefig(savefile)
-
+        show_or_save_patches(patches,rows,cols,savefile=savefile)
             
     def show_dict_patches(self,shape=None,patch_shape=None,savefile=None):
         if patch_shape is None:
@@ -826,27 +837,8 @@ class Oc_Dict(Saveable):
             rows,cols = (1,self.cardinality)
         #if not hasattr(self,'atom_patches'):
         self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
-        self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
-        fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
-        #for i,j in np.ndindex(rows,cols):
-        for idx,ax in np.ndenumerate(axis):
-            try:
-                i = idx[0]
-            except IndexError:
-                i = 0
-            try:
-                j = idx[1]
-            except IndexError:
-                j = 0
-            if len(idx) == 1:
-                i = 0
-                j = idx[0]
-            ax.set_axis_off()
-            ax.imshow(self.atom_patches[cols*i + j],interpolation='nearest')
-        if savefile is None:
-            plt.show()
-        else:
-            plt.savefig(savefile)
+        #self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
+        show_or_save_patches(self.atom_patches,rows,cols,savefile=savefile)
 
 class dummy_transform(Transform):
     def __init__(self,patch_list):
@@ -1053,14 +1045,14 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,dissimilarity,affinity_matrix_threshold,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,epsilon,similarity_measure,affinity_matrix_threshold,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
-    		dissimilarity: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
+    		similarity_measure: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node
-        	affinity_matrix_threshold: threshold for affinity_matrix dissimilarities. Heavily depends on chosen dissimilarity measure"""
+        	affinity_matrix_threshold: threshold for affinity_matrix similarities. Heavily depends on chosen similarity measure"""
         
         Cluster.__init__(self,samples)
-        self.dissimilarity = dissimilarity
+        self.similarity_measure = similarity_measure 
         self.affinity_matrix_threshold = affinity_matrix_threshold
         self.patch_size = self.samples[0].shape
         self.epsilon = epsilon

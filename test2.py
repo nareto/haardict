@@ -19,8 +19,8 @@ def toc(printstr=True):
 
 np.random.seed(123)
 
-#save = False
-save = True
+save = False
+#save = True
 
 figures = True
 testid = 'flowers-transf'
@@ -41,14 +41,14 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #patch_size = (24,24)
 #patch_size = (32,32)
 patch_size = (8,8)
-npatches = None
-#npatches = 500
+#npatches = None
+npatches = 500
 sparsity = 2
-#meth = '2ddict'
-meth = 'ksvd'
+meth = '2ddict'
+#meth = 'ksvd'
 #test_meths = ['ksvd']
-clust = '2means'
-#clust = 'spectral'
+#clust = '2means'
+clust = 'spectral'
 
 ksvd_cardinality = 3
 
@@ -59,9 +59,9 @@ ksvd_cardinality = 3
 cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
-#spectral_dissimilarity = 'haarpsi'
-#spectral_dissimilarity = 'emd'
-spectral_dissimilarity = 'euclidean'
+#spectral_similarity = 'haarpsi'
+#spectral_similarity = 'emd'
+spectral_similarity = 'euclidean'
 affinity_matrix_threshold = 10
 
 #TRANSFORMS
@@ -104,7 +104,7 @@ if rec_transf is not None:
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
     tic()
-    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_dissimilarity=spectral_dissimilarity,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
+    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
     elapsed_time = toc(0)
 
     print('Learned dictionary in %f seconds' % elapsed_time)
@@ -146,7 +146,7 @@ def print_test_parameters(dictionary,elapsed_time):
     if meth == '2ddict':
         desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
         if clust == 'spectral':
-            desc_string += '\nSpectral dissimilarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_dissimilarity,dictionary.clustering.affinity_matrix_nonzero_perc)
+            desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
     if rec_transf is not None:
         desc_string += '\nReconstruction transform: %s' % (rec_transf)
 
@@ -185,7 +185,7 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
         if clust == '2means':
             savename += '-2means'
         else:
-            savename += '-spec_%s' % spectral_dissimilarity
+            savename += '-spec_%s' % spectral_similarity
 
     recimg = savename+'-reconstructed_image.png'
     plt.imshow(rec)
@@ -196,11 +196,11 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     print(orgmode_str)
     if meth == '2ddict' and clust == 'spectral':
         plt.hist(dictionary.clustering.affinity_matrix.data)
-        disshist = savename+'-dissimilarities.png'
+        simhist = savename+'-similarities.png'
         if save:
-            plt.savefig(base_save_dir+disshist)
+            plt.savefig(base_save_dir+simhist)
         plt.close()
-        orgmode_str= '**** %s dissimilarity histograms\n[[file:%s]]\n' % (tag,disshist)
+        orgmode_str= '**** %s similarity histograms\n[[file:%s]]\n' % (tag,simhist)
         print(orgmode_str)
     dictelements = savename+'-showdict.png'
     orgmode_str = '**** %s showdict\n[[file:%s]]\n' % (tag,dictelements)
@@ -235,16 +235,16 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     print(orgmode_str)
 
     if npatches is not None and npatches < 100:
-        orgmode_str= '**** %s min diss histograms\n' % tag
+        orgmode_str= '**** %s min sim histograms\n' % tag
         print(orgmode_str)
-        for diss in ['euclidean','haarpsi','emd']:
+        for sim in ['euclidean','haarpsi','emd']:
             fig = plt.figure()
-            dictionary.min_dissimilarities(diss,False)
-            plt.hist(dictionary.min_diss)
-            disshist = savename+'-mindiss_%s'%(diss)+'.png'
-            orgmode_str = '[[file:%s]]' % disshist
+            dictionary.max_simimilarities(sim,False)
+            plt.hist(dictionary.max_sim)
+            simhist = savename+'-maxsim_%s'%(sim)+'.png'
+            orgmode_str = '[[file:%s]]' % simhist
             if save:
-                fig.savefig(base_save_dir+disshist)
+                fig.savefig(base_save_dir+simhist)
             fig.clear()
             plt.close()
             print(orgmode_str)
