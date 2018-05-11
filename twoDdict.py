@@ -608,9 +608,9 @@ class Cluster(Saveable):
         if self.similarity_measure == 'haarpsi':
             sim = simmeasure_haarpsi()
         elif self.similarity_measure == 'frobenius':
-            sim = simmeasure_frobenius(datavar=np.var(self.samples))
+            sim = simmeasure_frobenius(beta=self.simmeasure_beta,datavar=np.var(self.samples))
         elif self.similarity_measure == 'emd':
-            sim  = simmeasure_emd(self.patch_size,datavar=np.var(self.samples))
+            sim  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,datavar=np.var(self.samples))
 
         self.affinity_matrix = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
@@ -1052,14 +1052,15 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,similarity_measure,affinity_matrix_threshold=0.5,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,epsilon,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
     		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node
         	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
         
         Cluster.__init__(self,samples)
-        self.similarity_measure = similarity_measure 
+        self.similarity_measure = similarity_measure
+        self.simmeasure_beta = simmeasure_beta
         self.affinity_matrix_threshold = affinity_matrix_threshold
         self.patch_size = self.samples[0].shape
         self.epsilon = epsilon
