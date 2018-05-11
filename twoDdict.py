@@ -1,4 +1,3 @@
-
 import ipdb
 import itertools
 import pickle
@@ -9,7 +8,7 @@ from scipy.sparse import csr_matrix
 import scipy.sparse.linalg as sslinalg
 import skimage.io
 import skimage.color
-import skimage.filters as filters
+from skimage.filters import threshold_otsu
 import scipy.sparse
 from scipy.spatial.distance import pdist
 import pyemd
@@ -36,6 +35,9 @@ _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
 _MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-3
 _MAX_SIGNIFICATIVE_MACHINE_NUMBER = 1e3
+
+def sumsupto(k):
+    return(k*(k+1)/2)
 
 def matrix2patches(matrix,shape=None):
     """Returns list of arrays obtained from columns of matrix"""
@@ -122,11 +124,12 @@ def simmeasure_haarpsi(reshape=False):
         return(sim_meas(p1,p2))
     return(dh)
 
-def simmeasure_euclidean():
-    ret = lambda patch1,patch2: np.linalg.norm(patch1 - patch2)
+#beta=0.06
+def simmeasure_frobenius(beta=0.06,datavar=1):
+    ret = lambda patch1,patch2: np.exp(-beta*(np.linalg.norm(patch1 - patch2,ord='fro')**2)/datavar)
     return(ret)
 
-def simmeasure_emd(patch_size):
+def simmeasure_emd(patch_size,beta=0.06,datavar=1):
     prows,pcols = patch_size
     histlength = prows*pcols
     metric_matrix = np.zeros((histlength,histlength))
@@ -137,7 +140,7 @@ def simmeasure_emd(patch_size):
         p2 = np.array([row2,col2])
         metric_matrix[i,j] = np.linalg.norm(p1-p2)
     metric_matrix += metric_matrix.transpose()
-    ret = lambda patch1,patch2: pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)
+    ret = lambda patch1,patch2: np.exp(-beta*(pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)**2))
     return(ret)
 
 def centroid(values):
@@ -340,14 +343,14 @@ def affinity_matrix(samples,similarity_measure,threshold):
     cols = []
     counter = 0
     for i,j in itertools.combinations(range(nsamples),2):
-        print('\r%d/%d' % (counter + 1,nsamples*(nsamples-1)/2), sep=' ',end='',flush=True)
+        print('\r%d/%d' % (counter + 1,sumsupto(nsamples-1)), sep=' ',end='',flush=True)
         d = similarity_measure(samples[i], samples[j])
-        if d < threshold:
+        if d > threshold:
             data.append(d)
             rows.append(i)
             cols.append(j)
         counter += 1
-    print('%.2f percentage of the similarities was below the threshold' % (len(data)/len(samples)))
+    print('\n %.2f percentage of the similarities is above the threshold' % (100*len(data)/sumsupto(len(samples))))
     data = np.array(data)
     #data,rows,cols = _compute_diss_rows_cols(diss)
     #thresholded_data = data.copy()
@@ -368,15 +371,21 @@ def affinity_matrix(samples,similarity_measure,threshold):
     #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER*_MAX_SIGNIFICATIVE_MACHINE_NUMBER))/(2*(avgd - 5*vard))
     #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER))/(avgd - 3*vard)
     #print('\navgd = %f\n vard = %f\n beta = %f' % (avgd,vard,beta))
-    data /= data.max()
-    beta = 4
-    exp_data = np.exp(-beta*data)
-    expaff_mat = csr_matrix((exp_data,(rows,cols)),shape=(nsamples,nsamples))
-    print('...done')
-    expaff_mat = expaff_mat + expaff_mat.transpose()
+    #data /= data.max()
+    #beta = 4
+    #exp_data = np.exp(-beta*data)
+    #expaff_mat = csr_matrix((exp_data,(rows,cols)),shape=(nsamples,nsamples))
+    #print('...done')
+    #expaff_mat = expaff_mat + expaff_mat.transpose()
     #affinity_matrix = expaff_mat
     #print(len(affinity_matrix.data)/(affinity_matrix.shap
-    return(expaff_mat)
+    #return(expaff_mat)
+
+    aff_mat = csr_matrix((data,(rows,cols)),shape=(nsamples,nsamples))
+    aff_mat = aff_mat + aff_mat.transpose()
+    #print(len(affinity_matrix.data)/(affinity_matrix.shap
+    return(aff_mat)
+    
     
 
 def covariance_matrix(patches):
@@ -437,8 +446,6 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     else:
         plt.savefig(savefile)
 
-
-
 def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
@@ -456,7 +463,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
-    spectral_similarity: similarity measure used for spectral clustering. Can be 'euclidean','haarpsi' or 'emd' (earth's mover distance)
+    spectral_similarity: similarity measure used for spectral clustering. Can be 'frobenius','haarpsi' or 'emd' (earth's mover distance)
     affinity_matrix_threshold: threshold for pairwise similarities in affinity matrix
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
     wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
@@ -599,11 +606,11 @@ class Cluster(Saveable):
 
     def _compute_affinity_matrix(self):
         if self.similarity_measure == 'haarpsi':
-            sim = simmeasure_haarpsi(1)
-        elif self.similarity_measure == 'euclidean':
-            sim = simmeasure_euclidean()
+            sim = simmeasure_haarpsi()
+        elif self.similarity_measure == 'frobenius':
+            sim = simmeasure_frobenius(datavar=np.var(self.samples))
         elif self.similarity_measure == 'emd':
-            sim  = simmeasure_emd(self.patch_size)
+            sim  = simmeasure_emd(self.patch_size,datavar=np.var(self.samples))
 
         self.affinity_matrix = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
@@ -699,13 +706,13 @@ class Oc_Dict(Saveable):
         self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
         self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
 
-    def max_similarities(self,similarity_measure='euclidean',progress=True):
+    def max_similarities(self,similarity_measure='frobenius',progress=True):
         """Computes self.max_sim, array of maximum similarities between dictionary atoms and input patches"""
         
         if similarity_measure == 'haarpsi':
             sim = simmeasure_haarpsi(1)
-        elif similarity_measure == 'euclidean':
-            sim = simmeasure_euclidean()
+        elif similarity_measure == 'frobenius':
+            sim = simmeasure_frobenius()
         elif similarity_measure == 'emd':
             sim = simmeasure_emd(self.patch_size)
         max_sim = []
@@ -731,7 +738,7 @@ class Oc_Dict(Saveable):
         counter = 0
         for j1,j2 in itertools.combinations(range(ncols),2):
             if progress:
-                print('\r%d/%d' % (counter + 1,ncols*(ncols-1)/2), sep=' ',end='',flush=True)
+                print('\r%d/%d' % (counter + 1,sumsupto(ncols-1)), sep=' ',end='',flush=True)
             col1 = self.matrix[:,j1]
             col2 = self.matrix[:,j2]
             sp = np.dot(col1,col2)
@@ -1045,11 +1052,11 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,similarity_measure,affinity_matrix_threshold,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,epsilon,similarity_measure,affinity_matrix_threshold=0.5,minsamples=7,implementation='explicit'):
         """	samples: patches to cluster
-    		similarity_measure: can be 'euclidean', 'haarpsi' or 'emd' (earth's mover distance)
+    		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
         	epsilon: threshold for WCSS used as criteria to branch on a tree node
-        	affinity_matrix_threshold: threshold for affinity_matrix similarities. Heavily depends on chosen similarity measure"""
+        	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
         
         Cluster.__init__(self,samples)
         self.similarity_measure = similarity_measure 
@@ -1077,7 +1084,8 @@ class spectral_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        self._compute_affinity_matrix()
+        if not hasattr(self,'affinity_matrix'):
+            self._compute_affinity_matrix()
         def WCSS(clust1_idx,clust2_idx):
             samples1 = [self.samples[i] for i in clust1_idx]
             samples2 = [self.samples[i] for i in clust2_idx]
@@ -1128,7 +1136,8 @@ class spectral_clustering(Cluster):
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        self._compute_affinity_matrix()
+        if not hasattr(self,'affinity_matrix'):
+            self._compute_affinity_matrix()
         #np.save('tmpaffmat',self.affinity_matrix)
         #self.affinity_matrix = np.load('tmpaffmat.npy').item()
         self.egvecs = []
@@ -1147,24 +1156,35 @@ class spectral_clustering(Cluster):
             aff_mat = self.affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
             diag = np.array([row.sum() for row in aff_mat])
             diagsqrt = np.diag(diag**(-1/2))
-            mat = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
+            laplacian_matrix = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
             #print(depth, cur.nsamples,aff_mat.shape)
             #print('Computing eigenvalues/vectors of %s x %s matrix' % mat.shape)
-            egval,egvec = sslinalg.eigsh(mat,k=2,which='SM')
+            egval,egvec = sslinalg.eigsh(laplacian_matrix,k=2,which='SM')
             #print("eigenvalues: ", egval)
             vec = egvec[:,1] #second eigenvalue
             #simple mean thresholding:
             #mean = vec.mean()
             #isinleftcluster = vec > mean
-            isinleftcluster = vec > filters.threshold_otsu(vec)
+            #isinleftcluster = vec > filters.threshold_otsu(vec)
+            isinleftcluster = vec > threshold_otsu(vec)
+            self.egvecs.append((cur.depth,vec,isinleftcluster))
+            lnonzero,rnonzero = 0,0
             for k,label in np.ndenumerate(isinleftcluster):
                 k = k[0]
                 if label:
                     lsamples_idx.append(cur.samples_idx[k])
+                    if diag[k] != 0:
+                        lnonzero += 1
                 else:
                     rsamples_idx.append(cur.samples_idx[k])
+                    if diag[k] != 0:
+                        rnonzero += 1
+                    
             #print("left and right cards: ", len(lsamples_idx),len(rsamples_idx))
-            ncutval = Ncut(np.diag(diag),aff_mat,isinleftcluster)
+            try:
+                ncutval = Ncut(np.diag(diag),aff_mat,isinleftcluster)
+            except ZeroDivisionError:
+                continue
             #if np.linalg.norm(aff_mat[1:,1:].todense()) == 0:
             #    ipdb.set_trace()
             #print("Ncut = ", ncutval)]
@@ -1177,12 +1197,18 @@ class spectral_clustering(Cluster):
                 rnode = Node(rsamples_idx,cur,False)
                 cur.children = (lnode,rnode)
                 depth = max((depth,lnode.depth,rnode.depth))
-                self.egvecs.append((depth,vec,isinleftcluster))
-                if len(lsamples_idx) > self.minsamples:
+                #if len(lsamples_idx) > self.minsamples:
+                if lnonzero > self.minsamples:
                     tovisit = [lnode] + tovisit
-                if len(rsamples_idx) > self.minsamples:
+                else:
+                    self.leafs.append(lnode)
+                #if len(rsamples_idx) > self.minsamples:
+                if rnonzero > self.minsamples:
                     tovisit = [rnode] + tovisit
-            if cur.children is None:
+                else:
+                    self.leafs.append(lnode)
+            #if cur.children is None:
+            else:
                 self.leafs.append(cur)
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth

@@ -53,15 +53,15 @@ clust = 'spectral'
 ksvd_cardinality = 3
 
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
-#cluster_epsilon = 1e-4
+cluster_epsilon = 1e-4
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
-cluster_epsilon = 1500
+#cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
 #spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
-spectral_similarity = 'euclidean'
+spectral_similarity = 'frobenius'
 affinity_matrix_threshold = 10
 
 #TRANSFORMS
@@ -237,7 +237,7 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     if npatches is not None and npatches < 100:
         orgmode_str= '**** %s min sim histograms\n' % tag
         print(orgmode_str)
-        for sim in ['euclidean','haarpsi','emd']:
+        for sim in ['frobenius','haarpsi','emd']:
             fig = plt.figure()
             dictionary.max_simimilarities(sim,False)
             plt.hist(dictionary.max_sim)
