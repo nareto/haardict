@@ -19,8 +19,8 @@ def toc(printstr=True):
 
 np.random.seed(123)
 
-save = False
-#save = True
+#save = False
+save = True
 
 figures = True
 testid = 'flowers-transf'
@@ -62,7 +62,8 @@ cluster_epsilon = 1e-4
 #spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
 spectral_similarity = 'frobenius'
-affinity_matrix_threshold = 10
+affinity_matrix_threshold = 0.5
+simmeasure_beta = 0.06 #only for Frobenius and EMD similarity measures
 
 #TRANSFORMS
 #learn_transf = 'wavelet'
@@ -104,7 +105,7 @@ if rec_transf is not None:
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
     tic()
-    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
+    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
     elapsed_time = toc(0)
 
     print('Learned dictionary in %f seconds' % elapsed_time)
@@ -239,7 +240,7 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
         print(orgmode_str)
         for sim in ['frobenius','haarpsi','emd']:
             fig = plt.figure()
-            dictionary.max_simimilarities(sim,False)
+            dictionary.max_similarities(sim,False)
             plt.hist(dictionary.max_sim)
             simhist = savename+'-maxsim_%s'%(sim)+'.png'
             orgmode_str = '[[file:%s]]' % simhist

@@ -446,7 +446,7 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     else:
         plt.savefig(savefile)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -464,6 +464,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     	- spectral: spectral clustering (slow)
     cluster_epsilon: threshold for clustering (lower = finer clustering)
     spectral_similarity: similarity measure used for spectral clustering. Can be 'frobenius','haarpsi' or 'emd' (earth's mover distance)
+    simmeasure_beta: beta parameter for Frobenius and Earth Mover's distance similarity measures
     affinity_matrix_threshold: threshold for pairwise similarities in affinity matrix
     twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
     wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
@@ -506,7 +507,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     elif clustering == '2means':
         cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
     elif clustering == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,affinity_matrix_threshold=affinity_matrix_threshold)    
+        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold)    
     cluster_instance.compute()
 
     #BUILD DICT
@@ -710,7 +711,7 @@ class Oc_Dict(Saveable):
         """Computes self.max_sim, array of maximum similarities between dictionary atoms and input patches"""
         
         if similarity_measure == 'haarpsi':
-            sim = simmeasure_haarpsi(1)
+            sim = simmeasure_haarpsi()
         elif similarity_measure == 'frobenius':
             sim = simmeasure_frobenius()
         elif similarity_measure == 'emd':
