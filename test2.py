@@ -53,15 +53,15 @@ clust = 'spectral'
 ksvd_cardinality = 3
 
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
-cluster_epsilon = 1e-4
+cluster_epsilon = 1.5e-1
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
 #cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
-#spectral_similarity = 'haarpsi'
+spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
-spectral_similarity = 'frobenius'
+#spectral_similarity = 'frobenius'
 affinity_matrix_threshold = 0.5
 simmeasure_beta = 0.06 #only for Frobenius and EMD similarity measures
 
@@ -91,17 +91,10 @@ dwtd = False
 if rec_transf is not None:
     dwtd = True
 
-# last_tic = dt.datetime.now()
-# 
-# def tic():
-#     global last_tic
-#     last_tic = dt.datetime.now()
-# 
-# def toc(arg):
-#     global last_tic
-#     dtobj = dt.datetime.now() - last_tic
-#     return(dtobj.seconds)
-#     
+### PLOTTING
+#show_sc_egvs = True
+show_sc_egvs = False
+
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
     tic()
@@ -133,6 +126,8 @@ def main():
         print_and_save_figures(dictionary,img,rec,coefs,tag)
         if meth == '2ddict':
             print_and_save_figures(dictionary2,img,rec2,coefs2,tag2)
+        if show_sc_egvs:
+            dictionary.clustering.plotegvecs()
 
 def print_test_parameters(dictionary,elapsed_time):
     desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'

@@ -1215,6 +1215,26 @@ class spectral_clustering(Cluster):
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
 
+    def plotegvecs(self,savefile=None):
+        #self.egvecs.append((cur.depth,vec,isinleftcluster))
+        fig,axis = plt.subplots(min(10,len(self.egvecs)),1)
+        for idx,ax in np.ndenumerate(axis):
+            depth,egv,isinleftcluster = self.egvecs[idx[0]]
+            egv.sort()
+            isinleftcluster = egv > threshold_otsu(egv)
+
+            t = np.arange(0,len(egv))
+            split = isinleftcluster.argmax()
+            leftt = t[:split]
+            rightt = t[split:]
+            ax.plot(leftt,egv[:split],'r-')
+            ax.plot(rightt,egv[split:],'b-')
+            #plt.plot(0.2*isinleftcluster,'g')
+        if savefile is not None:
+            plt.savefig(savefile)
+        else:
+            plt.show()
+            
 class felzenszwalb_huttenlocher_clustering(Cluster):
     """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
 
