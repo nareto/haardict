@@ -191,7 +191,8 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,recimg)
     print(orgmode_str)
     if meth == '2ddict' and clust == 'spectral':
-        plt.hist(dictionary.clustering.affinity_matrix.data)
+        nb = int(len(clust.samples)/5)
+        plt.hist(dictionary.clustering.affinity_matrix.data,bins=nb)
         simhist = savename+'-similarities.png'
         if save:
             plt.savefig(base_save_dir+simhist)
