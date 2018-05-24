@@ -21,6 +21,7 @@ import oct2py
 import gc
 import queue
 import pywt
+import datetime as dt
 #from oct2py import octave
 #octave.eval('pkg load image')
 #oc = oct2py.Oct2Py()
@@ -35,6 +36,19 @@ _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
 _MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-3
 _MAX_SIGNIFICATIVE_MACHINE_NUMBER = 1e3
+
+LAST_TIC = dt.datetime.now()
+def tic():
+    global LAST_TIC
+    LAST_TIC = dt.datetime.now()
+
+def toc(printstr=True):
+    global LAST_TIC
+    dtobj = dt.datetime.now() - LAST_TIC
+    ret = dtobj.total_seconds()
+    if printstr:
+        print('%f seconds elapsed' % ret)
+    return(ret)
 
 def sumsupto(k):
     return(k*(k+1)/2)
@@ -489,7 +503,8 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     if npatches is not None:
         patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:npatches]
     print('Working with %d patches' % len(patches))
-    
+
+    tic()
     #TRANSFORM
     if transform == '2dpca':
         transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
@@ -519,7 +534,10 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
     #dictionary.compute()
-    return(dictionary)
+    time = toc(False)
+    if npatches is not None and method == 'ksvd':
+        dictionary.useksvdencoding = False
+    return(dictionary,time)
 
 def reconstruct(oc_dict,imgpath,psize,sparsity=5,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,wavelet='haar'):
     clip = False
@@ -527,6 +545,7 @@ def reconstruct(oc_dict,imgpath,psize,sparsity=5,transform=None,twodpca_l=3,twod
     img = np_or_img_to_array(imgpath,psize)
     patches = extract_patches(img,psize)
 
+    tic()
     #TRANSFORM
     if transform == '2dpca':
         transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
@@ -545,9 +564,10 @@ def reconstruct(oc_dict,imgpath,psize,sparsity=5,transform=None,twodpca_l=3,twod
     #reconstructed_patches = [p.reshape(psize) for p in rec_matrix.transpose()]
     reconstructed_patches = transform_instance.reverse(rec_patches)
     reconstructed = assemble_patches(reconstructed_patches,img.shape)
+    time = toc(False)
     if clip:
         reconstructed = clip(reconstructed)
-    return(reconstructed,coefs)        
+    return(reconstructed,coefs,time)        
 
 class Saveable():
     def save_pickle(self,filepath):
@@ -763,22 +783,27 @@ class Oc_Dict(Saveable):
     #    return(omp._coef)        
 
     def encode_samples(self,samples,sparsity,center_samples=True):
-        if hasattr(self,'_encode'):
-            self._encode(samples)
+        #if hasattr(self,'_encode'):
+        #    self._encode(samples)
+        means = []
+        for s in samples.transpose():
+            mean = s.mean()
+            s -= mean
+            means.append(mean)
+        if isinstance(self,ksvd_dict) and self.useksvdencoding:
+            print('\n\n\nHELLO\n\n\n')
+            #ipdb.set_trace()
+            coefs = self.encoding
         else:
-            means = []
-            for s in samples.transpose():
-                mean = s.mean()
-                s -= mean
-                means.append(mean)
-                #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True)
+            #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True)
             omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity)
             #if normalize:
             #    #sample /= outnorm
             #    matrix = self.normalized_matrix
             #    norm_coefs = self.normalization_coefficients
             omp.fit(self.matrix,samples)
-        return(means,omp.coef_.transpose())
+            coefs = omp.coef_.transpose()
+        return(means,coefs)
 
     def encode_patches(self,patches,sparsity,center_samples=True):
         return(self.encode_samples(patches2matrix(patches),sparsity,center_samples))
@@ -1026,10 +1051,10 @@ class twomeans_clustering(Cluster):
         while len(tovisit) > 0:
             cur = tovisit.pop()
             centroid = (sum([ line for line in self.cluster_matrix[np.array(cur.samples_idx)]]))/cur.nsamples
-            var = sum([np.linalg.norm(p-centroid) for p in self.cluster_matrix[np.array(cur.samples_idx)]])/cur.nsamples
+            var = sum([np.linalg.norm(p-centroid)**2 for p in self.cluster_matrix[np.array(cur.samples_idx)]])/cur.nsamples
             if cur.nsamples > self.minsamples and var > self.epsilon:
                 #km_instance = KMeans(n_clusters=2,n_jobs=-1)
-                km_instance = KMeans(n_clusters=2,tol=0.1)
+                km_instance = KMeans(n_clusters=2,tol=0.1,max_iter=50)
                 km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
                 self.wcss.append(km.inertia_)
                 lsamples_idx = []
@@ -1362,6 +1387,7 @@ class ksvd_dict(Oc_Dict):
         self.octave.addpath('ompbox/')
         self.octave.addpath(implementation+'/')
         self.compute()
+        self.useksvdencoding = True
         Oc_Dict.__init__(self,self.matrix)
 
     def _ksvd(self):
@@ -1401,7 +1427,7 @@ class ksvd_dict(Oc_Dict):
         #[D,X] = octave.ksvd(params)
         print('Done...')
         #[D,X] = self.oc.eval('ksvdparams)
-        self.encoding = X
+        self.encoding = X.todense()
         self.matrix = D
         self.dictelements = []
         rows,cols = self.patches[0].shape

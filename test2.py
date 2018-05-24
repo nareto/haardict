@@ -2,29 +2,15 @@ from twoDdict import *
 import numpy as np
 import matplotlib.pyplot as plt
 import copy
-import datetime as dt
-
-LAST_TIC = dt.datetime.now()
-def tic():
-    global LAST_TIC
-    LAST_TIC = dt.datetime.now()
-
-def toc(printstr=True):
-    global LAST_TIC
-    dtobj = dt.datetime.now() - LAST_TIC
-    ret = dtobj.total_seconds()
-    if printstr:
-        print('%f seconds elapsed' % ret)
-    return(ret)
 
 np.random.seed(123)
 
-#save = False
-save = True
+save = False
+#save = True
 
 figures = True
-#testid = 'flowers-transf'
-testid = 'fp1->fp2'
+testid = 'flowers'
+#testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
 #base_save_dir = '/Users/renato/tmp/'
@@ -32,18 +18,19 @@ base_save_dir = '/Users/renato/nextcloud/phd/'
 save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
-#learnimg = 'img/flowers_pool-rescale.npy'
-#codeimg = 'img/flowers_pool-rescale.npy'
-learnimg = 'img/fprint1.png'
-codeimg = 'img/fprint2.png'
+learnimgs = ['img/flowers_pool-rescale.npy']
+#learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
+codeimg = 'img/flowers_pool-rescale.npy'
+#learnimg = 'img/fprint1.png'
+#codeimg = 'img/fprint2.png'
 #codeimg = 'img/rocks_lake-rescaled.npy'
 #codeimg = 'img/barbara.jpg'
 #learnimg = 'img/flowers_pool-small.npy'
 #codeimg = 'img/flowers_pool-small.npy'
-#patch_size = (16,16)
+patch_size = (16,16)
 #patch_size = (24,24)
 #patch_size = (32,32)
-patch_size = (8,8)
+#patch_size = (8,8)
 npatches = None
 #npatches = 500
 sparsity = 2
@@ -53,10 +40,12 @@ meth = 'ksvd'
 clust = '2means'
 #clust = 'spectral'
 
-ksvd_cardinality = 
+ksvd_cardinality = 100
 
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
-cluster_epsilon = 1.5e1
+#cluster_epsilon = 1.5e1
+#cluster_epsilon = 135e-3
+cluster_epsilon = 0.3
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
 #cluster_epsilon = 1500
@@ -100,23 +89,23 @@ show_sc_egvs = False
 
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
-    tic()
-    dictionary = learn_dict([learnimg],npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
-    elapsed_time = toc(0)
 
-    print('Learned dictionary in %f seconds' % elapsed_time)
-    print_test_parameters(dictionary,elapsed_time)
+    dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
+
+    #print('Learned dictionary in %f seconds' % learn_time)
     ### RECONSTRUCT ###
-    #tic()
-    rec,coefs = reconstruct(dictionary,codeimg,patch_size,sparsity,rec_transf,twodpca_l=tdpcal,twodpca_r=tdpcar,wavelet=wav,wav_lev=wavlev)
+    rec,coefs,rec_time = reconstruct(dictionary,codeimg,patch_size,sparsity,rec_transf,twodpca_l=tdpcal,twodpca_r=tdpcar,wavelet=wav,wav_lev=wavlev)
     #print('Reconstructed image in %f seconds' % toc(0))
     #rec = rescale(rec,True)
+    print_test_parameters(dictionary,learn_time,rec_time)
+    #print('Reconstructed in %f seconds' % rec_time)
+    #print('Total time: %f' % learn_time + rec_time)
     print_rec_results(dictionary,rec,img,coefs)
     if meth == '2ddict':
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')    
         #tic()
-        rec2,coefs2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,rec_transf,wavelet=wav,wav_lev=wavlev)
+        rec2,coefs2,time = reconstruct(dictionary2,codeimg,patch_size,sparsity,rec_transf,wavelet=wav,wav_lev=wavlev)
         #print('Reconstructed image in %f seconds' % toc(0))
         #rec = rescale(rec,True)
         print_rec_results(dictionary2,img,rec2,coefs2,False)
@@ -132,10 +121,10 @@ def main():
         if show_sc_egvs:
             dictionary.clustering.plotegvecs()
 
-def print_test_parameters(dictionary,elapsed_time):
+def print_test_parameters(dictionary,learn_time,rec_time):
     desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
-    desc_string += '\nLearn img: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nCoding sparsity: %d\nElapsed time: %4.2f' % \
-                   (learnimg,codeimg,patch_size,len(dictionary.patches),meth,sparsity,elapsed_time)
+    desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nCoding sparsity: %d\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
+                   (learnimgs,codeimg,patch_size,len(dictionary.patches),meth,sparsity,learn_time,rec_time,learn_time+rec_time)
     #if mc is not None:
     #    desc_string += '\nMutual coherence: %f (from atoms %d and %d)' % (mc,argmc[0],argmc[1])
     if learn_transf is not None:
