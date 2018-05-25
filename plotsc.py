@@ -13,14 +13,15 @@ p750 = [patches[i] for i in np.random.permutation(range(len(patches)))][:750]
 p50 = [patches[i] for i in np.random.permutation(range(len(patches)))][:50]                                                
 p150 = [patches[i] for i in np.random.permutation(range(len(patches)))][:150]                                                
 #dd = td.learn_dict(['img/flowers_pool-rescale.npy'])                                                                         
-scemd750 = td.spectral_clustering(p750,1e-4,'emd')
-scemd50 = td.spectral_clustering(p50,1e-4,'emd')
-schaar50 = td.spectral_clustering(p50,1e-4,'haarpsi')
-schaar750 = td.spectral_clustering(p750,1e-4,'haarpsi')
-scfro750 = td.spectral_clustering(p750,1e-4,'frobenius')
+#scemd750 = td.spectral_clustering(p750,1e-4,'emd')
+#scemd50 = td.spectral_clustering(p50,1e-4,'emd')
+#schaar50 = td.spectral_clustering(p50,1e-4,'haarpsi')
+#schaar750 = td.spectral_clustering(p750,1e-4,'haarpsi')
+#scfro750 = td.spectral_clustering(p750,1e-4,'frobenius')
 
 def exec(loadpickle=False):
-    for simm,beta in zip(['frobenius','haarpsi','emd'],[0.06,1,0.001]):
+    #for simm,beta in zip(['frobenius','haarpsi','emd'],[1e4,1e3,1e4]):
+    for simm,beta in zip(['frobenius','emd','haarpsi'],[1,1,1e-5]):
         sc = td.spectral_clustering(p750,1e-4,simm,simmeasure_beta=beta)
         codename = 'scp750clust-seed:'+str(seed)+'-'+simm+'.pickle'
         if loadpickle:
@@ -59,7 +60,6 @@ def plotegv(clust,savep=None):
         plt.savefig(savep)
     else:
         plt.show()
-
 
 
 

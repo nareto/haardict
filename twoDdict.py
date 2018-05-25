@@ -139,11 +139,16 @@ def simmeasure_haarpsi(reshape=False):
     return(dh)
 
 #beta=0.06
-def simmeasure_frobenius(beta=0.06,datavar=1):
+def simmeasure_frobenius(beta=0.06,samples=None):
+    if samples is None:
+        datavar = 1
+    else:
+        avg = sum(samples)/len(samples)
+        datavar = sum([np.linalg.norm(p-avg,ord='fro')**2 for p in samples])/len(samples)
     ret = lambda patch1,patch2: np.exp(-beta*(np.linalg.norm(patch1 - patch2,ord='fro')**2)/datavar)
     return(ret)
 
-def simmeasure_emd(patch_size,beta=0.06,datavar=1):
+def simmeasure_emd(patch_size,beta=0.06,samples=None):
     prows,pcols = patch_size
     histlength = prows*pcols
     metric_matrix = np.zeros((histlength,histlength))
@@ -154,7 +159,12 @@ def simmeasure_emd(patch_size,beta=0.06,datavar=1):
         p2 = np.array([row2,col2])
         metric_matrix[i,j] = np.linalg.norm(p1-p2)
     metric_matrix += metric_matrix.transpose()
-    ret = lambda patch1,patch2: np.exp(-beta*(pyemd.emd(patch1.flatten(),patch2.flatten(),metric_matrix)**2))
+    if samples is None:
+        datavar = 1
+    else:
+        avg = sum(samples)/len(samples)
+        datavar = sum([pyemd.emd(p.astype('float64').flatten(),avg.astype('float64').flatten(),metric_matrix)**2 for p in samples])/len(samples)
+    ret = lambda patch1,patch2: np.exp(-beta*(pyemd.emd(patch1.astype('float64').flatten(),patch2.astype('float64').flatten(),metric_matrix)**2)/datavar)
     return(ret)
 
 def centroid(values):
@@ -629,9 +639,9 @@ class Cluster(Saveable):
         if self.similarity_measure == 'haarpsi':
             sim = simmeasure_haarpsi()
         elif self.similarity_measure == 'frobenius':
-            sim = simmeasure_frobenius(beta=self.simmeasure_beta,datavar=np.var(self.samples))
+            sim = simmeasure_frobenius(beta=self.simmeasure_beta,samples=self.samples)
         elif self.similarity_measure == 'emd':
-            sim  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,datavar=np.var(self.samples))
+            sim  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,samples=self.samples)
 
         self.affinity_matrix = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
