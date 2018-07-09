@@ -38,13 +38,13 @@ patch_size = (16,16)
 npatches = None
 #npatches = 750
 sparsity = 3
-meth = '2ddict'
-#meth = 'ksvd'
+#meth = '2ddict'
+meth = 'ksvd'
 #test_meths = ['ksvd']
 clust = '2means'
 #clust = 'spectral'
 
-ksvd_cardinality = 51
+ksvd_cardinality = 156
 
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 5e-6

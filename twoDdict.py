@@ -1401,7 +1401,7 @@ class ksvd_dict(Oc_Dict):
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
         Y = patches2matrix(self.patches)
-        params = {'data': Y,
+        params = {'data': Y.astype('double'),
                  'Tdata': self.sparsity,
                  'dictsize': self.dictsize,
                  'memusage': 'normal'} #'low','normal' or 'high'
