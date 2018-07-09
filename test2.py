@@ -8,8 +8,9 @@ np.random.seed(123)
 save = False
 #save = True
 
-figures = True
-testid = 'flowers'
+#figures = True
+figures = False
+testid = 'transftesting'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
@@ -20,7 +21,10 @@ save_prefix = 'jimg/'+date+'-'+testid
 #codeimg = 'img/flowers_pool.cr2'
 learnimgs = ['img/flowers_pool-rescale.npy']
 #learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
+#learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
 codeimg = 'img/flowers_pool-rescale.npy'
+#codeimg = 'img/boat512.png'
+#codeimg = 'img/landscape1-rescaled.jpg'
 #learnimg = 'img/fprint1.png'
 #codeimg = 'img/fprint2.png'
 #codeimg = 'img/rocks_lake-rescaled.npy'
@@ -32,47 +36,47 @@ patch_size = (16,16)
 #patch_size = (32,32)
 #patch_size = (8,8)
 npatches = None
-#npatches = 500
-sparsity = 2
-#meth = '2ddict'
-meth = 'ksvd'
+#npatches = 750
+sparsity = 3
+meth = '2ddict'
+#meth = 'ksvd'
 #test_meths = ['ksvd']
 clust = '2means'
 #clust = 'spectral'
 
-ksvd_cardinality = 100
+ksvd_cardinality = 51
 
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
-#cluster_epsilon = 1.5e1
+#cluster_epsilon = 5e-6
+#cluster_epsilon = 52e-4
 #cluster_epsilon = 135e-3
-cluster_epsilon = 0.3
+#cluster_epsilon = 42.5
+#cluster_epsilon = 0.35
+cluster_epsilon = 1.5e-1
+#cluster_epsilon = 0.3e-1
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
 #cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
-spectral_similarity = 'haarpsi'
-#spectral_similarity = 'emd'
+#spectral_similarity = 'haarpsi'
+lspectral_similarity = 'emd'
 #spectral_similarity = 'frobenius'
-affinity_matrix_threshold = 0.5
-simmeasure_beta = 0.06 #only for Frobenius and EMD similarity measures
+affinity_matrix_threshold = 2e-2
+simmeasure_beta = 1 #only for Frobenius and EMD similarity measures
 
 #TRANSFORMS
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet_packet'
-#learn_transf = '2dpca'
-learn_transf = None
+learn_transf = '2dpca'
+#learn_transf = None
 #wav = 'db2'
 wav = 'haar'
 wavlev = 1
-tdpcal,tdpcar = 4,4
-rec_transf = None
-#rec_transf = 'wavelet'
-#rec_transf = 'wavelet_packet'
-#rec_transf = '2dpca'
+tdpcal,tdpcar = 2,2
 mc = None
-compute_mutual_coherence = True
+compute_mutual_coherence = False
 
 
 ### LEARNING ###
@@ -93,8 +97,11 @@ def main():
     dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
 
     #print('Learned dictionary in %f seconds' % learn_time)
+    #if meth == 'ksvd'  and (npatches is not None or len(learnimgs) > 1 or codeimg != learnimgs[0]) :
+    dictionary.useksvdencoding = False
+
     ### RECONSTRUCT ###
-    rec,coefs,rec_time = reconstruct(dictionary,codeimg,patch_size,sparsity,rec_transf,twodpca_l=tdpcal,twodpca_r=tdpcar,wavelet=wav,wav_lev=wavlev)
+    rec,coefs,rec_time = reconstruct(dictionary,codeimg,patch_size,sparsity)
     #print('Reconstructed image in %f seconds' % toc(0))
     #rec = rescale(rec,True)
     print_test_parameters(dictionary,learn_time,rec_time)
@@ -103,9 +110,9 @@ def main():
     print_rec_results(dictionary,rec,img,coefs)
     if meth == '2ddict':
         dictionary2 = copy.deepcopy(dictionary)
-        dictionary2.set_dicttype('centroids')    
+        dictionary2.set_dicttype('centroids')
         #tic()
-        rec2,coefs2,time = reconstruct(dictionary2,codeimg,patch_size,sparsity,rec_transf,wavelet=wav,wav_lev=wavlev)
+        rec2,coefs2,time = reconstruct(dictionary2,codeimg,patch_size,sparsity)
         #print('Reconstructed image in %f seconds' % toc(0))
         #rec = rescale(rec,True)
         print_rec_results(dictionary2,img,rec2,coefs2,False)
@@ -162,7 +169,7 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
         meth_string = meth
     if firstorgline:
         print('\n')
-        print(orgmode_table_line(['Method','K','Mutual Coeherence', 'Entropy','PSNR','HaarPSI']))
+        print(orgmode_table_line(['Method','K','Mutual Coherence', 'Entropy','PSNR','HaarPSI']))
     print(orgmode_table_line([meth_string,dictionary.cardinality,mcstring,ent,psnrval,hpi]))
 
 
@@ -183,7 +190,7 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,recimg)
     print(orgmode_str)
     if meth == '2ddict' and clust == 'spectral':
-        nb = int(len(clust.samples)/5)
+        nb = int(len(dictionary.clustering.samples)/5)
         plt.hist(dictionary.clustering.affinity_matrix.data,bins=nb)
         simhist = savename+'-similarities.png'
         if save:

@@ -524,7 +524,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
         transform_instance = wavelet_packet(patches,wavelet)
     elif transform is None:
         transform_instance = dummy_transform(patches)
-    data_to_cluster = transform_instance.compute()
+    data_to_cluster = transform_instance.transform() #tuple of transformed patches
     
     #CLUSTER
     if clustering is None or method != '2ddict':
@@ -536,44 +536,37 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     cluster_instance.compute()
 
     #BUILD DICT
-    patches4dict = patches
+    #patches4dict = patches
+    patches4dict = data_to_cluster
     if dict_with_transformed_data:
         patches4dict = data_to_cluster
     if method == '2ddict':
         dictionary = hierarchical_dict(cluster_instance,patches4dict,dicttype)
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
-    #dictionary.compute()
+    if method == '2ddict':
+        dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
+        dictionary.centroid_dictelements = transform_instance.reverse(dictionary.centroid_dictelements)
+        dictionary.set_dicttype(dicttype)
+    else:
+        dictionary.dictelements = transform_instance.reverse(dictionary.dictelements)
+        dictionary._dictelements_to_matrix()
     time = toc(False)
-    if npatches is not None and method == 'ksvd':
-        dictionary.useksvdencoding = False
     return(dictionary,time)
 
-def reconstruct(oc_dict,imgpath,psize,sparsity=5,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,wavelet='haar'):
+def reconstruct(oc_dict,imgpath,psize,sparsity=5):
     clip = False
     spars= sparsity
     img = np_or_img_to_array(imgpath,psize)
     patches = extract_patches(img,psize)
 
     tic()
-    #TRANSFORM
-    if transform == '2dpca':
-        transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
-    elif transform == 'wavelet':
-        transform_instance = wavelet_transform(patches,wav_lev,'haar')
-    elif transform == 'wavelet_packet':
-        transform_instance = wavelet_packet(patches,wavelet)
-    elif transform is None:
-        transform_instance = dummy_transform(patches)
-    data_to_reconstruct = transform_instance.compute()
-    
     outpatches = []
-    means,coefs = oc_dict.encode_patches(data_to_reconstruct,spars)
+    means,coefs = oc_dict.encode_patches(patches,spars)
     rec_patches = oc_dict.reconstruct_patches(coefs,means)
     
     #reconstructed_patches = [p.reshape(psize) for p in rec_matrix.transpose()]
-    reconstructed_patches = transform_instance.reverse(rec_patches)
-    reconstructed = assemble_patches(reconstructed_patches,img.shape)
+    reconstructed = assemble_patches(rec_patches,img.shape)
     time = toc(False)
     if clip:
         reconstructed = clip(reconstructed)
@@ -619,7 +612,7 @@ class Transform(Saveable):
     def __init__(self,patch_list):
         self.patch_list = patch_list
         
-    def compute(self):
+    def transform(self):
         """Computes the transform and returns a list of patches of the transformed data"""
         return(self._transform())
 
@@ -734,6 +727,9 @@ class Oc_Dict(Saveable):
     def compute(self):
         #self.compute_dictelements()
         self._compute()
+        self._dictelements_to_matrix()
+        
+    def _dictelements_to_matrix(self):
         self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
         self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
 
@@ -801,7 +797,7 @@ class Oc_Dict(Saveable):
             s -= mean
             means.append(mean)
         if isinstance(self,ksvd_dict) and self.useksvdencoding:
-            print('\n\n\nHELLO\n\n\n')
+            print('\n\nUSING KSVD ENCODING\n\n\n')
             #ipdb.set_trace()
             coefs = self.encoding
         else:
@@ -884,6 +880,8 @@ class Oc_Dict(Saveable):
         show_or_save_patches(self.atom_patches,rows,cols,savefile=savefile)
 
 class dummy_transform(Transform):
+    """Place holder transform which doesn't do anything"""
+    
     def __init__(self,patch_list):
         Transform.__init__(self,patch_list)
 
@@ -921,10 +919,20 @@ class twodpca_transform(Transform):
     def _compute_feature_matrix(self,patch):
         return(np.dot(np.dot(self.V.transpose(),patch),self.U))
 
+    def _invert_feature_matrix(self,fmat):
+        return(np.dot(np.dot(self.V,fmat),self.U.transpose()))
+
     def _transform(self):
         self.transformed_patches = tuple([self._compute_feature_matrix(p) \
                                           for p in self.patch_list])
         return(self.transformed_patches)
+
+    def _reverse_transform(self,transf_patches=None):
+        if transf_patches is None:
+            transf_patches = self.transformed_patches
+        outp = tuple([self._invert_feature_matrix(fmat) for fmat in transf_patches])
+        return(outp)
+
         
 class wavelet_transform(Transform):
     def __init__(self,patch_list,levels,wavelet='haar'):
@@ -942,7 +950,7 @@ class wavelet_transform(Transform):
         if transf_patches is None:
             transf_patches = self.transformed_patches
         outp = [pywt.waverec2(array2pywt(p.flatten(),self.levels),self.wavelet,'periodic') for p in transf_patches]
-        return(outp)
+        return(tuple(outp))
 
 class wavelet_packet(Transform):
     def __init__(self,patch_list,wavelet='haar'):
@@ -965,7 +973,7 @@ class wavelet_packet(Transform):
         outp = []
         for p in transf_patches:
             outp.append(array2wavpack(p.flatten(),self.wavelet,self.levels).reconstruct())
-        return(outp)
+        return(tuple(outp))
     
 class dummy_clustering(Cluster):
     def _cluster(self):
@@ -1007,12 +1015,10 @@ class twomeans_clustering(Cluster):
         self.minsamples = minsamples
         self.cluster_matrix = patches2matrix(self.samples).transpose()
 
-    #@profile
     def _cluster(self):
-        self._cluster_orig()
-        #self._cluster_new()
+        self._cluster_wcss()
         
-    def _cluster_orig(self):
+    def _cluster_wcss(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
         tovisit = []
         tovisit.append(self.root_node)
@@ -1031,7 +1037,8 @@ class twomeans_clustering(Cluster):
                 km_instance = KMeans(n_clusters=2,tol=0.1)
                 km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
                 self.wcss.append(km.inertia_)
-                if km.inertia_ > self.epsilon: #if km.inertia is still big, we branch on this node
+                scaledwcss = km.inertia_/cur.nsamples
+                if scaledwcss > self.epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):
                         if label == 0:
                             lsamples_idx.append(cur.samples_idx[k])
@@ -1048,42 +1055,6 @@ class twomeans_clustering(Cluster):
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
 
-    def _cluster_new(self):
-        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
-        tovisit = []
-        tovisit.append(self.root_node)
-        self.leafs = []
-        cur_nodes = set()
-        prev_nodes = set()
-        prev_nodes.add(self)
-        depth = 0
-        self.wcss = []
-        while len(tovisit) > 0:
-            cur = tovisit.pop()
-            centroid = (sum([ line for line in self.cluster_matrix[np.array(cur.samples_idx)]]))/cur.nsamples
-            var = sum([np.linalg.norm(p-centroid)**2 for p in self.cluster_matrix[np.array(cur.samples_idx)]])/cur.nsamples
-            if cur.nsamples > self.minsamples and var > self.epsilon:
-                #km_instance = KMeans(n_clusters=2,n_jobs=-1)
-                km_instance = KMeans(n_clusters=2,tol=0.1,max_iter=50)
-                km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
-                self.wcss.append(km.inertia_)
-                lsamples_idx = []
-                rsamples_idx = []
-                for k,label in enumerate(km.labels_):
-                    if label == 0:
-                        lsamples_idx.append(cur.samples_idx[k])
-                    if label == 1:
-                        rsamples_idx.append(cur.samples_idx[k])
-                lnode = Node(lsamples_idx,cur,True)
-                rnode = Node(rsamples_idx,cur,False)
-                cur.children = (lnode,rnode)
-                tovisit = [lnode] + tovisit
-                tovisit = [rnode] + tovisit
-                depth = max((depth,lnode.depth,rnode.depth))
-            else:
-                self.leafs.append(cur)
-        self.tree_depth = depth
-        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
         
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
@@ -1301,6 +1272,8 @@ class hierarchical_dict(Oc_Dict):
 
     def __init__(self,clustering,patch_list,dicttype):
         self.clustering = clustering
+        if self.clustering.tree_depth == 0:
+            raise Exception('Tree depth is 0')
         self.patches = patch_list
         self.patch_size = self.patches[0].shape
         self.npatches = len(patch_list)
@@ -1316,15 +1289,16 @@ class hierarchical_dict(Oc_Dict):
     def set_dicttype(self, dtype):
         self.dicttype = dtype
         if self.dicttype == 'haar':
-            self.matrix = self.haar_matrix
-            self.normalization_coefficients = self.haar_normalization_coefficients
+            #self.matrix = self.haar_matrix
+            #self.normalization_coefficients = self.haar_normalization_coefficients
             self.dictelements = self.haar_dictelements
         elif self.dicttype == 'centroids':
-            self.matrix = self.centroid_matrix
-            self.normalization_coefficients = self.centroid_normalization_coefficients
+            #self.matrix = self.centroid_matrix
+            #self.normalization_coefficients = self.centroid_normalization_coefficients
             self.dictelements = self.centroid_dictelements
         else:
             raise Exception("dicttype must be either 'haar' or 'centroids'")
+        self._dictelements_to_matrix()
         self.cardinality = len(self.dictelements)
         
     def _compute_centroids(self, normalize=True):
