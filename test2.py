@@ -31,28 +31,29 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #codeimg = 'img/barbara.jpg'
 #learnimg = 'img/flowers_pool-small.npy'
 #codeimg = 'img/flowers_pool-small.npy'
-patch_size = (16,16)
+#patch_size = (16,16)
 #patch_size = (24,24)
 #patch_size = (32,32)
-#patch_size = (8,8)
+patch_size = (8,8)
 npatches = None
 #npatches = 750
 sparsity = 3
-#meth = '2ddict'
-meth = 'ksvd'
+meth = '2ddict'
+#meth = 'ksvd'
 #test_meths = ['ksvd']
 clust = '2means'
 #clust = 'spectral'
 
-ksvd_cardinality = 156
-
+#dictsize = 51
+dictsize = None
+#cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 5e-6
 #cluster_epsilon = 52e-4
 #cluster_epsilon = 135e-3
 #cluster_epsilon = 42.5
 #cluster_epsilon = 0.35
-cluster_epsilon = 1.5e-1
+cluster_epsilon = 1.5e-2
 #cluster_epsilon = 0.3e-1
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
@@ -62,15 +63,15 @@ cluster_epsilon = 1.5e-1
 #spectral_similarity = 'haarpsi'
 lspectral_similarity = 'emd'
 #spectral_similarity = 'frobenius'
-affinity_matrix_threshold = 2e-2
+affinity_matrix_threshold = 2e-1
 simmeasure_beta = 1 #only for Frobenius and EMD similarity measures
 
 #TRANSFORMS
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet_packet'
-learn_transf = '2dpca'
-#learn_transf = None
+#learn_transf = '2dpca'
+learn_transf = None
 #wav = 'db2'
 wav = 'haar'
 wavlev = 1
@@ -94,7 +95,7 @@ show_sc_egvs = False
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
 
-    dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,method=meth,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvddictsize=ksvd_cardinality,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
+    dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,method=meth,dictsize=dictsize,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
 
     #print('Learned dictionary in %f seconds' % learn_time)
     #if meth == 'ksvd'  and (npatches is not None or len(learnimgs) > 1 or codeimg != learnimgs[0]) :
@@ -139,7 +140,10 @@ def print_test_parameters(dictionary,learn_time,rec_time):
         if learn_transf is not '2dpca':
             desc_string += ' - %s' % wav
     if meth == '2ddict':
-        desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
+        if dictionary.clustering.visit == 'fifo':
+            desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
+        else:
+            desc_string += '\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (clust,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
         if clust == 'spectral':
             desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
     if rec_transf is not None:
@@ -164,7 +168,10 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
     #fronorm = np.linalg.norm(img-rec,ord='fro')
 
     if meth == '2ddict':
-        meth_string = '-'.join((meth,clust,dictionary.dicttype,('%.2e' % cluster_epsilon)))
+        if dictionary.clustering.visit == 'fifo':
+            meth_string = '-'.join((meth,clust,dictionary.dicttype,('%.2e' % cluster_epsilon)))
+        else:
+            meth_string = '-'.join((meth,clust,dictionary.dicttype))
     else:
         meth_string = meth
     if firstorgline:

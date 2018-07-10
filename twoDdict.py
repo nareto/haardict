@@ -470,7 +470,7 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     else:
         plt.savefig(savefile)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvddictsize=10,ksvdsparsity=2,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -530,7 +530,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     if clustering is None or method != '2ddict':
         cluster_instance = dummy_clustering(data_to_cluster)
     elif clustering == '2means':
-        cluster_instance = twomeans_clustering(data_to_cluster,epsilon=cluster_epsilon)
+        cluster_instance = twomeans_clustering(data_to_cluster,nbranchings=dictsize,epsilon=cluster_epsilon)
     elif clustering == 'spectral':
         cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold)    
     cluster_instance.compute()
@@ -543,7 +543,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',transform=No
     if method == '2ddict':
         dictionary = hierarchical_dict(cluster_instance,patches4dict,dicttype)
     elif method == 'ksvd':
-        dictionary = ksvd_dict(patches4dict,dictsize=ksvddictsize,sparsity=ksvdsparsity)
+        dictionary = ksvd_dict(patches4dict,dictsize=dictsize,sparsity=ksvdsparsity)
     if method == '2ddict':
         dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
         dictionary.centroid_dictelements = transform_instance.reverse(dictionary.centroid_dictelements)
@@ -625,6 +625,7 @@ class Cluster(Saveable):
 
     def __init__(self,samples):
         self.samples = samples
+        self.dim = self.samples[0].size
         self.nsamples = len(samples)
         self.root_node = None
 
@@ -1009,9 +1010,12 @@ class monkey_clustering(Cluster):
 class twomeans_clustering(Cluster):
     """Clusters data using recursive 2-means"""
 
-    def __init__(self,samples,epsilon,minsamples=5):
+    def __init__(self,samples,nbranchings=None,epsilon=None,minsamples=5):
         Cluster.__init__(self,samples)
+        if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
+            raise Exception('Exactly one of nbranchings or epsilon has to be set')
         self.epsilon = epsilon
+        self.nbranchings = nbranchings
         self.minsamples = minsamples
         self.cluster_matrix = patches2matrix(self.samples).transpose()
 
@@ -1020,41 +1024,65 @@ class twomeans_clustering(Cluster):
         
     def _cluster_wcss(self):
         self.root_node = Node(tuple(np.arange(self.nsamples)),None)
-        tovisit = []
-        tovisit.append(self.root_node)
-        self.leafs = []
+        if self.nbranchings is not None:
+            self.visit = 'priority'
+            tovisit = queue.PriorityQueue()
+        else:
+            self.visit = 'fifo'
+            tovisit = queue.Queue()
+            #tovisit = queue.LifoQueue()
+        if self.visit == 'priority':
+            #totwcss = self.nsamples*np.var(self.samples)
+            totwcss = np.var(self.samples)
+            tovisit.put((0,self.root_node))
+        else:
+            tovisit.put((None,self.root_node))
+        self.leafs = []     
         cur_nodes = set()
         prev_nodes = set()
         prev_nodes.add(self)
         depth = 0
-        self.wcss = []
-        while len(tovisit) > 0:
-            cur = tovisit.pop()
+        dsize = 1
+        #self.wcss = []
+        while not tovisit.empty():
+            father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur) 
             lsamples_idx = []
             rsamples_idx = []
-            if cur.nsamples > self.minsamples:
+            if cur.nsamples > self.minsamples and (self.visit != 'priority' or dsize < self.nbranchings):
                 #km_instance = KMeans(n_clusters=2,n_jobs=-1)
                 km_instance = KMeans(n_clusters=2,tol=0.1)
                 km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
-                self.wcss.append(km.inertia_)
-                scaledwcss = km.inertia_/cur.nsamples
-                if scaledwcss > self.epsilon: #if km.inertia is still big, we branch on this node
+                #self.wcss.append(km.inertia_)
+                scaledwcss = km.inertia_/(cur.nsamples*self.dim)
+                if self.visit == 'priority' or scaledwcss > self.epsilon: #if km.inertia is still big, we branch on this node
                     for k,label in enumerate(km.labels_):
                         if label == 0:
-                            lsamples_idx.append(cur.samples_idx[k])
+                            lsamples_idx.append(cur.samples_idx[k]) #independently at which level the node is, we always store absolute indexes for self.samples
                         if label == 1:
                             rsamples_idx.append(cur.samples_idx[k])
+                    if self.visit == 'priority':
+                        #lwcss = len(lsamples_idx)*np.var([self.samples[k] for k in lsamples_idx])
+                        lwcss = np.var([self.samples[k] for k in lsamples_idx])
+                        #rwcss = len(rsamples_idx)*np.var([self.samples[k] for k in rsamples_idx])
+                        rwcss = np.var([self.samples[k] for k in rsamples_idx])
+                        lpriority = totwcss - lwcss
+                        rpriority = totwcss - rwcss
+                        #print('lwcss = %3.5f \t  rwcss = %3.5f \t  lprio = %3.5f \t  rprio = %3.5f' % (lwcss,rwcss,lpriority,rpriority))
+                        dsize += 1
+                    else:
+                        lpriority = None
+                        rpriority = None
                     lnode = Node(lsamples_idx,cur,True)
                     rnode = Node(rsamples_idx,cur,False)
                     cur.children = (lnode,rnode)
-                    tovisit = [lnode] + tovisit
-                    tovisit = [rnode] + tovisit
+                    tovisit.put((lpriority,lnode))
+                    tovisit.put((rpriority,rnode))
                     depth = max((depth,lnode.depth,rnode.depth))
             if cur.children is None:
                 self.leafs.append(cur)
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
-
+        
         
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
