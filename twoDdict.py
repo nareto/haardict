@@ -356,7 +356,7 @@ def affinity_matrix2(samples,similarity_measure,threshold):
     X = patches2matrix(samples).T
     return(pdist(X,similarity_measure))
 
-def affinity_matrix(samples,similarity_measure,threshold):
+def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
     """Returns sparse matrix representation of matrix of pairwise similarities, keeping only the pairwise similarities that are below the given threshold"""
 
     nsamples = len(samples)
@@ -406,9 +406,10 @@ def affinity_matrix(samples,similarity_measure,threshold):
     #return(expaff_mat)
 
     aff_mat = csr_matrix((data,(rows,cols)),shape=(nsamples,nsamples))
-    aff_mat = aff_mat + aff_mat.transpose()
+    if symmetric:
+        aff_mat = aff_mat + aff_mat.transpose() #make it symmetrical
     #print(len(affinity_matrix.data)/(affinity_matrix.shap
-    return(aff_mat)
+    return(aff_mat,data,rows,cols)
     
     
 
@@ -629,7 +630,7 @@ class Cluster(Saveable):
         self.nsamples = len(samples)
         self.root_node = None
 
-    def _compute_affinity_matrix(self):
+    def _compute_affinity_matrix(self,**args):
         if self.similarity_measure == 'haarpsi':
             sim = simmeasure_haarpsi()
         elif self.similarity_measure == 'frobenius':
@@ -637,7 +638,7 @@ class Cluster(Saveable):
         elif self.similarity_measure == 'emd':
             sim  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,samples=self.samples)
 
-        self.affinity_matrix = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold)
+        self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold,args)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
 
     def compute(self):
@@ -1268,16 +1269,152 @@ class spectral_clustering(Cluster):
             plt.savefig(savefile)
         else:
             plt.show()
+
+class fh_union_find():
+    """Implementation originally due to Nils Doerrer of union find structure as used by felzenszwalb_huttenlocher_clustering class"""
+
+    def __init__(self, n, k=0.1):
+        """
+        Constructor for Segmentation class. Creates a union-find structure
+        where all components hold exactly one element. Also initializes
+        cardinality and Int lists
+        Args:
+        n:	number of components in the data structure
+        k:	parameter for the threshold function tau = k / |C|
+        """
+        self.parent = list(range(n))
+        self.Int = list(np.zeros(n))
+        self.cardinality = list(np.ones(n))
+        self.k = k
+        self.n = n
+
+    def find(self, i):
+        """
+        Recursively walks up the tree containing i and gives root node
+        Args:
+        i:	node to which the root should be found
+        Returns:
+        root node number (find(root) = root itself)
+        """
+        if self.parent[i] != i:
+            self.parent[i] = self.find(self.parent[i])
+        return self.parent[i]
+
+    def union(self, i, j, weight=0):
+        """
+        Unites two components in the union-find structure. Additionally it
+        adjusts the cardinality and Int values such that they are correct for
+        the root of each component after merging the components.
+        Args:
+        i:		node in first component to merge (not neccessarily root)
+        j:		node in second component to merge (not neccessarily root)
+        weight:	weight of the edge connecting them, needed to set Int value
+        """
+        i = self.find(i)
+        j = self.find(j)
+        if i != j:
+            self.parent[i] = j
+            self.cardinality[j] += self.cardinality[i]
+            self.Int[j] = max(self.Int[i], max(self.Int[j], weight))
+
+    def issame(self, i, j):
+        """
+        Checks whether two nodes are in the same component, i.e. have same root.
+        Args:
+        i:	first node
+        j:	second node
+        Returns:
+        true iff i and j are in the same component
+        """
+        return self.find(i) == self.find(j)
+
+    def MInt(self, i, j):
+        """
+        Returns the MInt value between two components (reasonable iff disjoint)
+        MInt = min( Int(C_i) + tau(C_i), Int(C_j) + tau(C_j) )
+        Depends on tau function below.
+        Args:
+        i:	node in the first component
+        j:	node in the second component
+        Returns:
+        MInt(C_i, C_j) value
+        """
+        i = self.find(i)
+        j = self.find(j)
+        return min(self.Int[i] + self.tau(i), self.Int[j] + self.tau(j))
+
+    def tau(self, i):
+        """
+        Represents the threshold function which depends on the component size.
+        Here it is set to k / |C| for some constant k.
+        Args:
+        i: root of a component (to get its cardinality)
+        Returns:
+        threshold-function value
+        """
+        return self.k / self.cardinality[i]
+        
+    def toImage(self, shape):
+        """
+        Converts the unionfind-structure to an Image of lables.
+        For that the shape of the image has to be specified.
+        This method only works if the labels correspond to the vertices
+        increasing row by row and column by column (sorted Vertex set).
+        Args:
+        shape:	shape of the original image and also resulting label image
+        Returns:
+        image (np.ndarray) of the lables in current segmentation state
+        """
+        labels = np.asarray([self.find(x) for x in range(self.n)]).reshape(shape)
+        if DEBUG:
+            print("labels")
+            print(labels)
+            print("cardinality")
+            print(np.asarray([self.cardinality[i] if i==self.find(i) else 0 for i in
+                              range(self.n)], dtype=np.int32).reshape(shape))
+            print("Int")
+            print(np.asarray(self.Int).reshape(shape))
+            return labels
+
+    def toLabelList(self):
+        """
+        Converts the unionfind-structure to a list of lists containing
+        member indices for each component. Each index is uniquely matched
+        to one of the components (at most n).
+        Returns:
+        list of lists, each holding member indices for each component
+        """
+        components = []
+        result = []
+        num = len(self.parent)
+        for i in range(num):
+            components.append([])
+        for i in range(num):
+            components[self.find(i)].append(i)
+        for entry in components:
+            if entry:				# = so if not empty
+                result.append(entry)
+        return result
+
             
 class felzenszwalb_huttenlocher_clustering(Cluster):
     """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
 
-    def __init__(self,samples,epsilon,minsamples=3):
+    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,minsamples=7):
         Cluster.__init__(self,samples)
-        self.epsilon = epsilon
+        self.similarity_measure = similarity_measure
+        self.simmeasure_beta = simmeasure_beta
+        self.affinity_matrix_threshold = affinity_matrix_threshold
+        self.patch_size = self.samples[0].shape
+        #self.epsilon = epsilon
         self.minsamples = minsamples
-        #self.cluster_matrix = patches2matrix(self.samples).transpose()
+        #self.implementation = implementation
+        #self.cluster_matrix = patches2matrix(self.samples).transpose()        
 
+        
+
+
+        
     def _cluster(self):
         #E = G.edges(data="weight")
 	#E = sorted(E, key=lambda x: x[2])
@@ -1289,7 +1426,9 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
 	#	if w <= seg.MInt(i, j):
 	#		seg.union(i, j, weight=w)
 	#return(seg)
-        pass
+        if not hasattr(self,'affinity_matrix'):
+            self._compute_affinity_matrix(symmetric=False)
+        #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
 
         
         
