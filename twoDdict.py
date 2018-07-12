@@ -1273,7 +1273,7 @@ class spectral_clustering(Cluster):
 class fh_union_find():
     """Implementation originally due to Nils Doerrer of union find structure as used by felzenszwalb_huttenlocher_clustering class"""
 
-    def __init__(self, n, k=0.1):
+    def __init__(self, n, k=1):
         """
         Constructor for Segmentation class. Creates a union-find structure
         where all components hold exactly one element. Also initializes
@@ -1315,7 +1315,7 @@ class fh_union_find():
         if i != j:
             self.parent[i] = j
             self.cardinality[j] += self.cardinality[i]
-            self.Int[j] = max(self.Int[i], max(self.Int[j], weight))
+            self.Int[j] = min(self.Int[i], min(self.Int[j], weight))
 
     def issame(self, i, j):
         """
@@ -1331,7 +1331,7 @@ class fh_union_find():
     def MInt(self, i, j):
         """
         Returns the MInt value between two components (reasonable iff disjoint)
-        MInt = min( Int(C_i) + tau(C_i), Int(C_j) + tau(C_j) )
+        MInt = max( Int(C_i) + tau(C_i), Int(C_j) + tau(C_j) )
         Depends on tau function below.
         Args:
         i:	node in the first component
@@ -1341,7 +1341,7 @@ class fh_union_find():
         """
         i = self.find(i)
         j = self.find(j)
-        return min(self.Int[i] + self.tau(i), self.Int[j] + self.tau(j))
+        return max(self.Int[i] - self.tau(i), self.Int[j] - self.tau(j)) # I want MInt to be smaller for low-cardinality sets
 
     def tau(self, i):
         """
@@ -1400,25 +1400,22 @@ class fh_union_find():
 class felzenszwalb_huttenlocher_clustering(Cluster):
     """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
 
-    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,minsamples=7):
+    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,fh_k=1,affinity_matrix_threshold=0.5,minsamples=7):
         Cluster.__init__(self,samples)
         self.similarity_measure = similarity_measure
         self.simmeasure_beta = simmeasure_beta
+        self.fh_k = 1
         self.affinity_matrix_threshold = affinity_matrix_threshold
         self.patch_size = self.samples[0].shape
         #self.epsilon = epsilon
         self.minsamples = minsamples
         #self.implementation = implementation
         #self.cluster_matrix = patches2matrix(self.samples).transpose()        
-
-        
-
-
         
     def _cluster(self):
         #E = G.edges(data="weight")
 	#E = sorted(E, key=lambda x: x[2])
-	#seg = NilsSegmentation(len(V), k=k)
+	#seg = Segmentation(len(V), k=k)
 	#for e in E:
 	#	(v1, v2, w) = e
 	#	i = V.index(v1)
@@ -1429,10 +1426,21 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
         if not hasattr(self,'affinity_matrix'):
             self._compute_affinity_matrix(symmetric=False)
         #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
-
-        
-        
-
+        argsort = self.affmat_data.argsort()[::-1]
+        edge_weights = self.affmat_data[argsort]
+        vertices = list(zip(np.array(self.affmat_rows)[argsort],(np.array(self.affmat_cols)[argsort])))
+        self.uf = fh_union_find(len(self.samples), k=self.fh_k)
+        nclusters = len(self.samples)
+        for ew,v in zip(edge_weights,vertices):
+            #print(e,v)
+            v1,v2 = v
+            #if ew >= self.uf.MInt(v1,v2):
+            #    self.uf.union(v1,v2,weight=ew)
+            self.uf.union(v1,v2,weight=ew)
+            nclusters -= 1
+            if nclusters == 2:
+                break
+            
         
         
 class hierarchical_dict(Oc_Dict):
@@ -1452,7 +1460,8 @@ class hierarchical_dict(Oc_Dict):
         self._compute_centroids(normalize)
         self._compute_haar(normalize)
         self.set_dicttype('haar') #set default dicttype
-        
+
+
     def set_dicttype(self, dtype):
         self.dicttype = dtype
         if self.dicttype == 'haar':
