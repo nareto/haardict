@@ -31,7 +31,6 @@ import datetime as dt
 from haarpsi import haar_psi
 
 _METHODS_ = ['2ddict','ksvd']
-_CLUSTERINGS_ = ['2means','spectral']
 _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
 _MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-3
@@ -66,6 +65,7 @@ def matrix2patches(matrix,shape=None):
 
 def patches2matrix(patches):
     """Returns matrix with columns given by flattened arrays in input"""
+    
     m = patches[0].size
     matrix = np.hstack([p.reshape(m,1) for p in patches])
     return(matrix)
@@ -499,8 +499,6 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
 
     if method not in _METHODS_:
         raise Exception("'method' has to be on of %s" % _METHODS_)
-    if clustering not in _CLUSTERINGS_:
-        raise Exception("'clustering' has to be on of %s" % _CLUSTERINGS_)
     if transform is not None and transform not in _TRANSFORMS_:
         raise Exception("'transform' has to be on of %s" % _TRANSFORMS_)
     images = []
@@ -528,23 +526,25 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
     data_to_cluster = transform_instance.transform() #tuple of transformed patches
     
     #CLUSTER
-    if clustering is None or method != '2ddict':
-        cluster_instance = dummy_clustering(data_to_cluster)
-    elif clustering == '2means':
-        cluster_instance = twomeans_clustering(data_to_cluster,nbranchings=dictsize,epsilon=cluster_epsilon)
-    elif clustering == 'spectral':
-        cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold)    
-    cluster_instance.compute()
+    #if clustering is None or method != '2ddict':
+    #    cluster_instance = dummy_clustering(data_to_cluster)
+    #elif clustering == '2means':
+    #    cluster_instance = twomeans_clustering(data_to_cluster,nbranchings=dictsize,epsilon=cluster_epsilon)
+    #elif clustering == 'spectral':
+    #    cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold)    
+    #cluster_instance.compute()
 
     #BUILD DICT
     #patches4dict = patches
-    patches4dict = data_to_cluster
+
     if dict_with_transformed_data:
         patches4dict = data_to_cluster
     if method == '2ddict':
-        dictionary = hierarchical_dict(cluster_instance,patches4dict,dicttype)
+        dictionary = hierarchical_dict(data_to_cluster)
+        dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon)
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=dictsize,sparsity=ksvdsparsity)
+        dictionary.compute()
     if method == '2ddict':
         dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
         dictionary.centroid_dictelements = transform_instance.reverse(dictionary.centroid_dictelements)
@@ -599,7 +599,7 @@ class Node():
                 self.idstr = parent.idstr + '1'
         self.children = None
         #self.samples_idx = None
-        self.samples_idx = tuple(samples_idx) #indexes of d.samples_idx where d is an ocdict
+        self.samples_idx = np.array(samples_idx) #indexes of d.samples_idx where d is an ocdict
         self.nsamples= len(self.samples_idx)
         #if samples_idx is not None:
         #    self.samples_idx = tuple(samples_idx) #indexes of d.samples_idx where d is an ocdict
@@ -640,9 +640,6 @@ class Cluster(Saveable):
 
         self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold,args)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
-
-    def compute(self):
-        self._cluster()
 
     def get_node(self,idstr):
         revid = list(idstr[::-1])
@@ -718,18 +715,20 @@ class Cluster(Saveable):
         
 class Oc_Dict(Saveable):
     """Dictionary"""
-    def __init__(self,matrix,patches_dim=None):
-        self.matrix = matrix
-        self.shape = matrix.shape
-        self.atom_dim,self.cardinality = matrix.shape
-        self.patches_dim = patches_dim
-        if patches_dim is not None:
-            self.twod_dict = True
+    def __init__(self,patch_list):
+        self.patches = np.array(patch_list)
+        #self.matrix = matrix
+        #self.shape = matrix.shape
+        #self.atom_dim,self.cardinality = matrix.shape
+        #self.patches_dim = patches_dim
+        #if patches_dim is not None:
+        #    self.twod_dict = True
+        self.patches_shape = self.patches[0].shape
 
-    def compute(self):
-        #self.compute_dictelements()
-        self._compute()
-        self._dictelements_to_matrix()
+
+    #def _compute(self):
+    #    #self.compute_dictelements()
+    #    self._dictelements_to_matrix()
         
     def _dictelements_to_matrix(self):
         self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
@@ -1011,78 +1010,21 @@ class monkey_clustering(Cluster):
 class twomeans_clustering(Cluster):
     """Clusters data using recursive 2-means"""
 
-    def __init__(self,samples,nbranchings=None,epsilon=None,minsamples=5):
-        Cluster.__init__(self,samples)
-        if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
-            raise Exception('Exactly one of nbranchings or epsilon has to be set')
-        self.epsilon = epsilon
-        self.nbranchings = nbranchings
-        self.minsamples = minsamples
+    def __init__(self,patches):
+        Cluster.__init__(self,patches)
         self.cluster_matrix = patches2matrix(self.samples).transpose()
 
-    def _cluster(self):
-        self._cluster_wcss()
+    def cluster(self, patch_indexes):
+        """Returns (idx1,idx2,wcss) where idx1 and idx2 are the set of indexes partitioning the data array and wcss is the achieved value of the WCSS function"""
         
-    def _cluster_wcss(self):
-        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
-        if self.nbranchings is not None:
-            self.visit = 'priority'
-            tovisit = queue.PriorityQueue()
-        else:
-            self.visit = 'fifo'
-            tovisit = queue.Queue()
-            #tovisit = queue.LifoQueue()
-        if self.visit == 'priority':
-            #totwcss = self.nsamples*np.var(self.samples)
-            totwcss = np.var(self.samples)
-            tovisit.put((0,self.root_node))
-        else:
-            tovisit.put((None,self.root_node))
-        self.leafs = []     
-        cur_nodes = set()
-        prev_nodes = set()
-        prev_nodes.add(self)
-        depth = 0
-        dsize = 1
-        #self.wcss = []
-        while not tovisit.empty():
-            father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur) 
-            lsamples_idx = []
-            rsamples_idx = []
-            if cur.nsamples > self.minsamples and (self.visit != 'priority' or dsize < self.nbranchings):
-                #km_instance = KMeans(n_clusters=2,n_jobs=-1)
-                km_instance = KMeans(n_clusters=2,tol=0.1)
-                km = km_instance.fit(self.cluster_matrix[np.array(cur.samples_idx)])
-                #self.wcss.append(km.inertia_)
-                scaledwcss = km.inertia_/(cur.nsamples*self.dim)
-                if self.visit == 'priority' or scaledwcss > self.epsilon: #if km.inertia is still big, we branch on this node
-                    for k,label in enumerate(km.labels_):
-                        if label == 0:
-                            lsamples_idx.append(cur.samples_idx[k]) #independently at which level the node is, we always store absolute indexes for self.samples
-                        if label == 1:
-                            rsamples_idx.append(cur.samples_idx[k])
-                    if self.visit == 'priority':
-                        #lwcss = len(lsamples_idx)*np.var([self.samples[k] for k in lsamples_idx])
-                        lwcss = np.var([self.samples[k] for k in lsamples_idx])
-                        #rwcss = len(rsamples_idx)*np.var([self.samples[k] for k in rsamples_idx])
-                        rwcss = np.var([self.samples[k] for k in rsamples_idx])
-                        lpriority = totwcss - lwcss
-                        rpriority = totwcss - rwcss
-                        #print('lwcss = %3.5f \t  rwcss = %3.5f \t  lprio = %3.5f \t  rprio = %3.5f' % (lwcss,rwcss,lpriority,rpriority))
-                        dsize += 1
-                    else:
-                        lpriority = None
-                        rpriority = None
-                    lnode = Node(lsamples_idx,cur,True)
-                    rnode = Node(rsamples_idx,cur,False)
-                    cur.children = (lnode,rnode)
-                    tovisit.put((lpriority,lnode))
-                    tovisit.put((rpriority,rnode))
-                    depth = max((depth,lnode.depth,rnode.depth))
-            if cur.children is None:
-                self.leafs.append(cur)
-        self.tree_depth = depth
-        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        km_instance = KMeans(n_clusters=2,tol=0.1)
+        km = km_instance.fit(self.cluster_matrix[patch_indexes,:])
+        #self.wcss.append(km.inertia_)
+        lsamples = (km.labels_ == 0).nonzero()[0]
+        rsamples = (km.labels_ != 0).nonzero()[0]
+        scaledwcss = km.inertia_/(len(patch_indexes*self.dim))
+
+        return(lsamples,rsamples,scaledwcss)
         
         
 class spectral_clustering(Cluster):
@@ -1441,24 +1383,92 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
             if nclusters == 2:
                 break
             
-        
+    def tree_cluster(self):
+        """Returns a hierarchical_dict using the inherent tree structure in the Felzenszwalb-Huttenlocher algorithm"""
+
+        pass
+         
         
 class hierarchical_dict(Oc_Dict):
 
-    def __init__(self,clustering,patch_list,dicttype):
-        self.clustering = clustering
-        if self.clustering.tree_depth == 0:
-            raise Exception('Tree depth is 0')
-        self.patches = patch_list
+    def __init__(self,patch_list):
+        Oc_Dict.__init__(self,patch_list)
         self.patch_size = self.patches[0].shape
         self.npatches = len(patch_list)
-        self.dicttype = dicttype
-        self.compute()
-        Oc_Dict.__init__(self,self.matrix)
+        self.dicttype = 'haar'
 
-    def _compute(self,normalize=True):
-        self._compute_centroids(normalize)
-        self._compute_haar(normalize)
+    def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5):
+        if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
+            raise Exception('Exactly one of nbranchings or epsilon has to be set')
+        if clustering_method == 'twomeans':
+            self.clustering = twomeans_clustering(self.patches)
+        elif clustering_method == 'spectral':
+            self.clustering = spectral_clustering(self.patches)
+        elif clustering_method == 'fh':
+            self.clustering = felzenszwalb_huttenlocher_clustering(self.patches)
+        else:
+            raise Exception('clustering_method must be either \'twomeans\',\'spectral\' or \'fh\'')
+        self.root_node = Node(tuple(np.arange(self.npatches)),None)
+        self.clust_epsilon = epsilon
+        if nbranchings is not None:
+            self.visit = 'priority'
+            tovisit = queue.PriorityQueue()
+        else:
+            self.visit = 'fifo'
+            tovisit = queue.Queue()
+            #tovisit = queue.LifoQueue()
+        if self.visit == 'priority':
+            #totwcss = self.nsamples*np.var(self.samples)
+            totvar = np.var(np.array(self.patches))
+            tovisit.put((0,self.root_node))
+        else:
+            tovisit.put((None,self.root_node))
+        self.leafs = []     
+        cur_nodes = set()
+        prev_nodes = set()
+        prev_nodes.add(self)
+        depth = 0
+        dsize = 1
+        #self.wcss = []
+        while not tovisit.empty():
+            father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur) 
+            if cur.nsamples > minsamples and (self.visit != 'priority' or dsize < nbranchings):
+                curlsamples, currsamples, clust_ret_val = self.clustering.cluster(cur.samples_idx)
+                abs_lsamples = cur.samples_idx[curlsamples]
+                abs_rsamples = cur.samples_idx[currsamples]
+                if self.visit == 'priority' or clust_ret_val > self.clust_epsilon: #decide whether or not to branch
+                    if self.visit == 'priority':
+                        #lwcss = len(lsamples_idx)*np.var([self.samples[k] for k in lsamples_idx])
+                        lvar = np.var(self.patches[abs_lsamples])
+                        #rwcss = len(rsamples_idx)*np.var([self.samples[k] for k in rsamples_idx])
+                        rvar = np.var(self.patches[abs_rsamples])
+                        lpriority = totvar - lvar
+                        rpriority = totvar - rvar
+                        #print('lwcss = %3.5f \t  rwcss = %3.5f \t  lprio = %3.5f \t  rprio = %3.5f' % (lwcss,rwcss,lpriority,rpriority))
+                        dsize += 1
+                    else:
+                        lpriority = None
+                        rpriority = None
+                    lnode = Node(abs_lsamples,cur,True)
+                    rnode = Node(abs_rsamples,cur,False)
+                    cur.children = (lnode,rnode)
+                    tovisit.put((lpriority,lnode))
+                    tovisit.put((rpriority,rnode))
+                    depth = max((depth,lnode.depth,rnode.depth))
+            if cur.children is None:
+                self.leafs.append(cur)
+        self.tree_depth = depth
+        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        self.tree2dict()
+        #self._compute()
+        
+    def tree2dict(self,normalize=True):
+        """Visits the tree and recomputes the dictionary elements"""
+
+        if self.tree_depth == 0:
+            raise Exception('Tree depth is 0')
+        self._tree2dict_centroids(normalize)
+        self._tree2dict_haar(normalize)
         self.set_dicttype('haar') #set default dicttype
 
 
@@ -1477,8 +1487,8 @@ class hierarchical_dict(Oc_Dict):
         self._dictelements_to_matrix()
         self.cardinality = len(self.dictelements)
         
-    def _compute_centroids(self, normalize=True):
-        leafs = self.clustering.leafs
+    def _tree2dict_centroids(self, normalize=True):
+        leafs = self.leafs
         ga = (1/self.npatches)*sum(self.patches[1:],self.patches[0])
         if normalize:
             ga /= np.linalg.norm(ga)
@@ -1491,8 +1501,8 @@ class hierarchical_dict(Oc_Dict):
         self.centroid_matrix,self.centroid_normalization_coefficients = normalize_matrix(self.centroid_matrix)
         
 
-    def _compute_haar(self,normalize=True):
-        root_node = self.clustering.root_node
+    def _tree2dict_haar(self,normalize=True):
+        root_node = self.root_node
         tovisit = [root_node]
         ga = (1/self.npatches)*sum(self.patches[1:],self.patches[0])
         if normalize:
@@ -1534,7 +1544,7 @@ class ksvd_dict(Oc_Dict):
     """Computes dictionary using KSVD method."""
     
     def __init__(self,patch_list,dictsize,sparsity,maxiter=8,implementation='ksvdbox'):
-        self.patches = patch_list
+        Oc_Dict.__init__(self,patch_list)
         self.npatches = len(patch_list)
         self.patch_size = self.patches[0].shape
         self.dictsize = dictsize
@@ -1548,7 +1558,7 @@ class ksvd_dict(Oc_Dict):
         self.octave.addpath(implementation+'/')
         self.compute()
         self.useksvdencoding = True
-        Oc_Dict.__init__(self,self.matrix)
+
 
     def _ksvd(self):
         """ Requires KSVD.m file"""

@@ -10,7 +10,7 @@ save = False
 
 #figures = True
 figures = False
-testid = 'transftesting'
+testid = 'newhcstructure'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
@@ -19,12 +19,12 @@ base_save_dir = '/Users/renato/nextcloud/phd/'
 save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
-learnimgs = ['img/flowers_pool-rescale.npy']
+#learnimgs = ['img/flowers_pool-rescale.npy']
 #learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
-#learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
-codeimg = 'img/flowers_pool-rescale.npy'
+learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
+#codeimg = 'img/flowers_pool-rescale.npy'
 #codeimg = 'img/boat512.png'
-#codeimg = 'img/landscape1-rescaled.jpg'
+codeimg = 'img/landscape1-rescaled.jpg'
 #learnimg = 'img/fprint1.png'
 #codeimg = 'img/fprint2.png'
 #codeimg = 'img/rocks_lake-rescaled.npy'
@@ -41,19 +41,19 @@ sparsity = 3
 meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
-clust = '2means'
+clust = 'twomeans'
 #clust = 'spectral'
 
-#dictsize = 51
-dictsize = None
-#cluster_epsilon = None
+dictsize = 160
+#dictsize = None
+cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
 #cluster_epsilon = 5e-6
 #cluster_epsilon = 52e-4
 #cluster_epsilon = 135e-3
 #cluster_epsilon = 42.5
-#cluster_epsilon = 0.35
-cluster_epsilon = 1.5e-2
+#cluster_epsilon = 8e-2
+#cluster_epsilon = 1.5e-2
 #cluster_epsilon = 0.3e-1
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
@@ -140,10 +140,10 @@ def print_test_parameters(dictionary,learn_time,rec_time):
         if learn_transf is not '2dpca':
             desc_string += ' - %s' % wav
     if meth == '2ddict':
-        if dictionary.clustering.visit == 'fifo':
-            desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
+        if dictionary.visit == 'fifo':
+            desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.tree_depth,dictionary.tree_sparsity)
         else:
-            desc_string += '\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (clust,dictionary.clustering.tree_depth,dictionary.clustering.tree_sparsity)
+            desc_string += '\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (clust,dictionary.tree_depth,dictionary.tree_sparsity)
         if clust == 'spectral':
             desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
     if rec_transf is not None:
@@ -168,7 +168,7 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
     #fronorm = np.linalg.norm(img-rec,ord='fro')
 
     if meth == '2ddict':
-        if dictionary.clustering.visit == 'fifo':
+        if dictionary.visit == 'fifo':
             meth_string = '-'.join((meth,clust,dictionary.dicttype,('%.2e' % cluster_epsilon)))
         else:
             meth_string = '-'.join((meth,clust,dictionary.dicttype))
@@ -197,7 +197,7 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,recimg)
     print(orgmode_str)
     if meth == '2ddict' and clust == 'spectral':
-        nb = int(len(dictionary.clustering.samples)/5)
+        nb = int(len(dictionary.samples)/5)
         plt.hist(dictionary.clustering.affinity_matrix.data,bins=nb)
         simhist = savename+'-similarities.png'
         if save:
