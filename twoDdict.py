@@ -1044,8 +1044,8 @@ class spectral_clustering(Cluster):
         self._compute_affinity_matrix()
         
     def cluster(self, patch_indexes):
-        return(self._cluster_scikit(patch_indexes))
-        #return(self._cluster_explicit(patch_indexes))
+        #return(self._cluster_scikit(patch_indexes))
+        return(self._cluster_explicit(patch_indexes))
 
     def _Ncut(self,W,y,D=None):
         if D is None:
