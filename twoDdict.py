@@ -541,7 +541,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
         patches4dict = data_to_cluster
     if method == '2ddict':
         dictionary = hierarchical_dict(data_to_cluster)
-        dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon)
+        dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
     elif method == 'ksvd':
         dictionary = ksvd_dict(patches4dict,dictsize=dictsize,sparsity=ksvdsparsity)
         dictionary.compute()
@@ -626,9 +626,8 @@ class Cluster(Saveable):
 
     def __init__(self,samples):
         self.samples = samples
-        self.dim = self.samples[0].size
+        self.data_dim = self.samples[0].size
         self.nsamples = len(samples)
-        self.root_node = None
 
     def _compute_affinity_matrix(self,**args):
         if self.similarity_measure == 'haarpsi':
@@ -640,6 +639,7 @@ class Cluster(Saveable):
 
         self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold,args)
         #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
+        self.affinity_matrix_nonzero_perc = len(self.affinity_matrix.data)/self.nsamples**2
 
     def get_node(self,idstr):
         revid = list(idstr[::-1])
@@ -1022,7 +1022,7 @@ class twomeans_clustering(Cluster):
         #self.wcss.append(km.inertia_)
         lsamples = (km.labels_ == 0).nonzero()[0]
         rsamples = (km.labels_ != 0).nonzero()[0]
-        scaledwcss = km.inertia_/(len(patch_indexes*self.dim))
+        scaledwcss = km.inertia_/(len(patch_indexes*self.data_dim))
 
         return(lsamples,rsamples,scaledwcss)
         
@@ -1030,167 +1030,83 @@ class twomeans_clustering(Cluster):
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
-    def __init__(self,samples,epsilon,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,minsamples=7,implementation='explicit'):
+    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5):
         """	samples: patches to cluster
     		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
-        	epsilon: threshold for WCSS used as criteria to branch on a tree node
         	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
         
         Cluster.__init__(self,samples)
         self.similarity_measure = similarity_measure
         self.simmeasure_beta = simmeasure_beta
         self.affinity_matrix_threshold = affinity_matrix_threshold
-        self.patch_size = self.samples[0].shape
-        self.epsilon = epsilon
-        self.minsamples = minsamples
-        self.implementation = implementation
+
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
+        self._compute_affinity_matrix()
+        
+    def cluster(self, patch_indexes):
+        return(self._cluster_scikit(patch_indexes))
+        #return(self._cluster_explicit(patch_indexes))
+
+    def _Ncut(self,W,y,D=None):
+        if D is None:
+            diag = np.array([row.sum() for row in W])
+            D = scipy.sparse.diags(diag)
+        #num = float(y.T.dot(D-W).dot(y))  #this doesn't work because of np.dot not being aware of sparse matrices. so horrible hacks follow
+        #den = float(y.T.dot(D).dot(y))
+        y = np.hstack(y)
+        #lterm = np.hstack(scipy.sparse.csr_matrix.dot(y.T,D-W))
+        lterm = scipy.sparse.csr_matrix.dot(y.T,D-W)
+        rterm = y.T
+        num = np.inner(lterm,rterm)
+        den = np.inner(np.inner(y,D.diagonal()),y)
+        return(num/den)
 
         
-    def _cluster(self):
-        if self.implementation == 'scikit':
-            self._cluster_scikit()
-        elif self.implementation == 'explicit':
-            self._cluster_explicit()
-        self.affinity_matrix_nonzero_perc = len(self.affinity_matrix.data)/len(self.samples)**2
+    def _cluster_scikit(self, patch_indexes):
+        """Returns (idx1,idx2,ncut) where idx1 and idx2 are the set of indexes partitioning the data array and ncut is the achieved value of the NCut function. Scikit's implementation of spectral clustering is used."""
 
-    def _cluster_scikit(self):
-        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
-        tovisit = []
-        tovisit.append(self.root_node)
-        self.leafs = []
-        cur_nodes = set()
-        prev_nodes = set()
-        prev_nodes.add(self)
-        depth = 0
-        if not hasattr(self,'affinity_matrix'):
-            self._compute_affinity_matrix()
-        def WCSS(clust1_idx,clust2_idx):
-            samples1 = [self.samples[i] for i in clust1_idx]
-            samples2 = [self.samples[i] for i in clust2_idx]
-            cent1 = sum(samples1[1:],samples1[0])
-            cent2 = sum(samples2[1:],samples2[0])
-            wcss = 0
-            for s1,s2 in zip(samples1,samples2):
-                wcss += np.linalg.norm(s1-cent1)**2 + np.linalg.norm(s2-cent2)**2
-            return(wcss)
+        aff_mat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
+        #if (aff_mat == 0).todense().all():
+        #    continue
+        #sc = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='discretize')
+        sc = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='kmeans')                
+        #sc = SpectralClustering(2,affinity='precomputed',eigen_solver='amg',assign_labels='discretize')
+        sc.fit(aff_mat)
+        lsamples = (sc.labels_ == 0).nonzero()[0]
+        rsamples = (sc.labels_ != 0).nonzero()[0]
+        ncut = self._Ncut(aff_mat,sc.labels_)
+
+        return(lsamples,rsamples,ncut,None)
         
-        while len(tovisit) > 0:
-            cur = tovisit.pop()
-            lsamples_idx = []
-            rsamples_idx = []
-            if cur.nsamples > self.minsamples:
-                aff_mat = self.affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
-                if (aff_mat == 0).todense().all():
-                    continue
-                #clust = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='discretize')
-                clust = SpectralClustering(2,affinity='precomputed',eigen_solver='arpack',assign_labels='kmeans')                
-                #clust = SpectralClustering(2,affinity='precomputed',eigen_solver='amg',assign_labels='discretize')
-                clust.fit(aff_mat)
-                for k,label in np.ndenumerate(clust.labels_):
-                    k = k[0]
-                    if label:
-                        lsamples_idx.append(cur.samples_idx[k])
-                    else:
-                        rsamples_idx.append(cur.samples_idx[k])
-                wcss = WCSS(lsamples_idx,rsamples_idx)
-                if wcss > self.epsilon:
-                    lnode = Node(lsamples_idx,cur,True)
-                    rnode = Node(rsamples_idx,cur,False)
-                    cur.children = (lnode,rnode)
-                    tovisit = [lnode] + tovisit
-                    tovisit = [rnode] + tovisit
-                    depth = max((depth,lnode.depth,rnode.depth))
-                if cur.children is None:
-                    self.leafs.append(cur)
-        self.tree_depth = depth
-        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
 
-    def _cluster_explicit(self):
-        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
-        tovisit = []
-        tovisit.append(self.root_node)
-        self.leafs = []
-        cur_nodes = set()
-        prev_nodes = set()
-        prev_nodes.add(self)
-        depth = 0
-        if not hasattr(self,'affinity_matrix'):
-            self._compute_affinity_matrix()
-        #np.save('tmpaffmat',self.affinity_matrix)
-        #self.affinity_matrix = np.load('tmpaffmat.npy').item()
-        self.egvecs = []
-                
-        def Ncut(D,W,y):
-            num = float(y.T.dot(D-W).dot(y))
-            den = float(y.T.dot(D).dot(y))
-            return(num/den)
+    def _cluster_explicit(self,patch_indexes):
+        """Returns (idx1,idx2,ncut,egvec) where idx1 and idx2 are the set of indexes partitioning the data array, ncut is the achieved value of the NCut function and egvec is the eigenvector achieving this value. Eigenvalues/vectors of the Laplacian are explicitly computed."""
+        
+        aff_mat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
+        diag = np.array([row.sum() for row in aff_mat])
+        D = scipy.sparse.diags(diag)
+        #diagsqrt = np.diag(diag**(-1/2))
+        diagsqrt = scipy.sparse.diags(np.hstack(D.data**(-1/2)))
+        laplacian_matrix = diagsqrt.dot(D - aff_mat).dot(diagsqrt).astype('f')
+        #print(depth, cur.nsamples,aff_mat.shape)
+        #print('Computing eigenvalues/vectors of %s x %s matrix' % mat.shape)
+        egval,egvec = sslinalg.eigsh(laplacian_matrix,k=2,which='SM')
+        #print("eigenvalues: ", egval)
+        vec = egvec[:,1] #second eigenvalue
+        #simple mean thresholding:
+        #mean = vec.mean()
+        #isinleftcluster = vec > mean
+        #isinleftcluster = vec > filters.threshold_otsu(vec)
+        isinleftcluster = vec > threshold_otsu(vec)
+        lnonzero,rnonzero = 0,0
+        lsamples = (isinleftcluster == 0).nonzero()[0]
+        rsamples = (isinleftcluster != 0).nonzero()[0]
+        #try:
+        ncutval = self._Ncut(aff_mat,isinleftcluster.reshape(len(patch_indexes),1),D)
+        #except ZeroDivisionError:
+        #    continue
 
-        self.idstr = []
-        while len(tovisit) > 0:
-            cur = tovisit.pop()
-            self.idstr.append(cur.idstr)
-            lsamples_idx = []
-            rsamples_idx = []
-            aff_mat = self.affinity_matrix[cur.samples_idx,:][:,cur.samples_idx]
-            diag = np.array([row.sum() for row in aff_mat])
-            diagsqrt = np.diag(diag**(-1/2))
-            laplacian_matrix = diagsqrt.dot(np.diag(diag) - aff_mat).dot(diagsqrt).astype('f')
-            #print(depth, cur.nsamples,aff_mat.shape)
-            #print('Computing eigenvalues/vectors of %s x %s matrix' % mat.shape)
-            egval,egvec = sslinalg.eigsh(laplacian_matrix,k=2,which='SM')
-            #print("eigenvalues: ", egval)
-            vec = egvec[:,1] #second eigenvalue
-            #simple mean thresholding:
-            #mean = vec.mean()
-            #isinleftcluster = vec > mean
-            #isinleftcluster = vec > filters.threshold_otsu(vec)
-            isinleftcluster = vec > threshold_otsu(vec)
-            self.egvecs.append((cur.depth,vec,isinleftcluster))
-            lnonzero,rnonzero = 0,0
-            for k,label in np.ndenumerate(isinleftcluster):
-                k = k[0]
-                if label:
-                    lsamples_idx.append(cur.samples_idx[k])
-                    if diag[k] != 0:
-                        lnonzero += 1
-                else:
-                    rsamples_idx.append(cur.samples_idx[k])
-                    if diag[k] != 0:
-                        rnonzero += 1
-                    
-            #print("left and right cards: ", len(lsamples_idx),len(rsamples_idx))
-            try:
-                ncutval = Ncut(np.diag(diag),aff_mat,isinleftcluster)
-            except ZeroDivisionError:
-                continue
-            #if np.linalg.norm(aff_mat[1:,1:].todense()) == 0:
-            #    ipdb.set_trace()
-            #print("Ncut = ", ncutval)]
-            #leftaffmatnorm = np.linalg.norm(self.affinity_matrix[lsamples_idx,:][:,lsamples_idx].todense())
-            #rightaffmatnorm = np.linalg.norm(self.affinity_matrix[rsamples_idx,:][:,rsamples_idx].todense())
-            #if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0:
-            #if ncutval > self.epsilon and leftaffmatnorm > 0 and rightaffmatnorm > 0 and cur.nsamples > self.minsamples:
-            if ncutval > self.epsilon and len(lsamples_idx) > 0 and len(rsamples_idx) > 0:
-                lnode = Node(lsamples_idx,cur,True)
-                rnode = Node(rsamples_idx,cur,False)
-                cur.children = (lnode,rnode)
-                depth = max((depth,lnode.depth,rnode.depth))
-                #if len(lsamples_idx) > self.minsamples:
-                if lnonzero > self.minsamples:
-                    tovisit = [lnode] + tovisit
-                else:
-                    self.leafs.append(lnode)
-                #if len(rsamples_idx) > self.minsamples:
-                if rnonzero > self.minsamples:
-                    tovisit = [rnode] + tovisit
-                else:
-                    self.leafs.append(lnode)
-            #if cur.children is None:
-            else:
-                self.leafs.append(cur)
-        self.tree_depth = depth
-        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        return(lsamples,rsamples,ncutval,vec)
 
     def plotegvecs(self,savefile=None):
         #self.egvecs.append((cur.depth,vec,isinleftcluster))
@@ -1397,13 +1313,13 @@ class hierarchical_dict(Oc_Dict):
         self.npatches = len(patch_list)
         self.dicttype = 'haar'
 
-    def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5):
+    def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5,spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5):
         if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
         if clustering_method == 'twomeans':
             self.clustering = twomeans_clustering(self.patches)
         elif clustering_method == 'spectral':
-            self.clustering = spectral_clustering(self.patches)
+            self.clustering = spectral_clustering(self.patches,spectral_sim_measure,simbeta,affthreshold)
         elif clustering_method == 'fh':
             self.clustering = felzenszwalb_huttenlocher_clustering(self.patches)
         else:
@@ -1433,7 +1349,10 @@ class hierarchical_dict(Oc_Dict):
         while not tovisit.empty():
             father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur) 
             if cur.nsamples > minsamples and (self.visit != 'priority' or dsize < nbranchings):
-                curlsamples, currsamples, clust_ret_val = self.clustering.cluster(cur.samples_idx)
+                if clustering_method == 'spectral':
+                    curlsamples, currsamples, clust_ret_val,egvec = self.clustering.cluster(cur.samples_idx)
+                else:
+                    curlsamples, currsamples, clust_ret_val = self.clustering.cluster(cur.samples_idx)
                 abs_lsamples = cur.samples_idx[curlsamples]
                 abs_rsamples = cur.samples_idx[currsamples]
                 if self.visit == 'priority' or clust_ret_val > self.clust_epsilon: #decide whether or not to branch

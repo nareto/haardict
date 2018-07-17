@@ -35,16 +35,16 @@ codeimg = 'img/landscape1-rescaled.jpg'
 #patch_size = (24,24)
 #patch_size = (32,32)
 patch_size = (8,8)
-npatches = None
-#npatches = 750
+#npatches = None
+npatches = 200
 sparsity = 3
 meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
-clust = 'twomeans'
-#clust = 'spectral'
+#clust = 'twomeans'
+clust = 'spectral'
 
-dictsize = 160
+dictsize = 50
 #dictsize = None
 cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
@@ -60,10 +60,10 @@ cluster_epsilon = None
 #cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
-#spectral_similarity = 'haarpsi'
-lspectral_similarity = 'emd'
+spectral_similarity = 'haarpsi'
+#spectral_similarity = 'emd'
 #spectral_similarity = 'frobenius'
-affinity_matrix_threshold = 2e-1
+affinity_matrix_threshold = 0.65
 simmeasure_beta = 1 #only for Frobenius and EMD similarity measures
 
 #TRANSFORMS
