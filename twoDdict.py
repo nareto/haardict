@@ -409,7 +409,7 @@ def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
     if symmetric:
         aff_mat = aff_mat + aff_mat.transpose() #make it symmetrical
     #print(len(affinity_matrix.data)/(affinity_matrix.shap
-    return(aff_mat,data,rows,cols)
+    return(aff_mat,data,np.array(rows),np.array(cols))
     
     
 
@@ -525,25 +525,13 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
         transform_instance = dummy_transform(patches)
     data_to_cluster = transform_instance.transform() #tuple of transformed patches
     
-    #CLUSTER
-    #if clustering is None or method != '2ddict':
-    #    cluster_instance = dummy_clustering(data_to_cluster)
-    #elif clustering == '2means':
-    #    cluster_instance = twomeans_clustering(data_to_cluster,nbranchings=dictsize,epsilon=cluster_epsilon)
-    #elif clustering == 'spectral':
-    #    cluster_instance = spectral_clustering(data_to_cluster,epsilon=cluster_epsilon,similarity_measure=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold)    
-    #cluster_instance.compute()
 
     #BUILD DICT
-    #patches4dict = patches
-
-    if dict_with_transformed_data:
-        patches4dict = data_to_cluster
     if method == '2ddict':
         dictionary = hierarchical_dict(data_to_cluster)
         dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
     elif method == 'ksvd':
-        dictionary = ksvd_dict(patches4dict,dictsize=dictsize,sparsity=ksvdsparsity)
+        dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
         dictionary.compute()
     if method == '2ddict':
         dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
@@ -986,26 +974,11 @@ class monkey_clustering(Cluster):
     def __init__(self,samples):
         Cluster.__init__(self,samples)
     
-    def _cluster(self,levels=3):
-        self.tree_depth = levels
-        self.root_node = Node(tuple(np.arange(self.nsamples)),None)
-        tovisit = [self.root_node]
-        while len(tovisit) > 0 and depth <= levels:
-            cur = tovisit.pop()
-            indexes = list(cur.samples_idx)
-            np.random.shuffle(indexes)
-            k = int(len(indexes)/2)
-            lindexes = indexes[:k]
-            rindexes = indexes[k:]
-            lnode = Node(lindexes,cur,True)
-            rnode = Node(rindexes,cur,False)
-            cur.children = (lnode,rnode)
-            tovisit = [lnode] + tovisit
-            tovisit = [rnode] + tovisit
-            depth = max((depth,lnode.depth,rnode.depth))
-        self.leafs = tovisit
-        self.tree_depth = depth
-        self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+    def cluster(self,patch_indexes):
+        ran = np.random.randint(0,2,len(patch_indexes))
+        lsamples = (ran == 0).nonzero()[0]
+        rsamples = (ran != 0).nonzero()[0]
+        return(lsamples,rsamples,None)
     
 class twomeans_clustering(Cluster):
     """Clusters data using recursive 2-means"""
@@ -1039,7 +1012,7 @@ class spectral_clustering(Cluster):
         self.similarity_measure = similarity_measure
         self.simmeasure_beta = simmeasure_beta
         self.affinity_matrix_threshold = affinity_matrix_threshold
-
+    
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
         self._compute_affinity_matrix()
         
@@ -1258,34 +1231,66 @@ class fh_union_find():
 class felzenszwalb_huttenlocher_clustering(Cluster):
     """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
 
-    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,fh_k=1,affinity_matrix_threshold=0.5,minsamples=7):
+    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5):
+        """	samples: patches to cluster
+    		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
+        	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
         Cluster.__init__(self,samples)
         self.similarity_measure = similarity_measure
         self.simmeasure_beta = simmeasure_beta
-        self.fh_k = 1
         self.affinity_matrix_threshold = affinity_matrix_threshold
-        self.patch_size = self.samples[0].shape
-        #self.epsilon = epsilon
-        self.minsamples = minsamples
-        #self.implementation = implementation
-        #self.cluster_matrix = patches2matrix(self.samples).transpose()        
+
+        self.cluster_matrix = patches2matrix(self.samples).transpose()        
+        self._compute_affinity_matrix()
+
+
+    def cluster(self,patch_indexes):
+        #if not hasattr(self,'affinity_matrix'):
+        #    self._compute_affinity_matrix(symmetric=False)
+        return(self._cluster(patch_indexes))
+        #return(self._cluster_tree(patch_indexes))    
         
-    def _cluster(self):
-        #E = G.edges(data="weight")
-	#E = sorted(E, key=lambda x: x[2])
-	#seg = Segmentation(len(V), k=k)
-	#for e in E:
-	#	(v1, v2, w) = e
-	#	i = V.index(v1)
-	#	j = V.index(v2)
-	#	if w <= seg.MInt(i, j):
-	#		seg.union(i, j, weight=w)
-	#return(seg)
-        if not hasattr(self,'affinity_matrix'):
-            self._compute_affinity_matrix(symmetric=False)
+    def _cluster(self,patch_indexes):
+        """Returns a hierarchical_dict using the inherent tree structure in the Felzenszwalb-Huttenlocher algorithm"""
+
         #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
-        argsort = self.affmat_data.argsort()[::-1]
-        edge_weights = self.affmat_data[argsort]
+        aff_mat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
+        #argsort = self.affmat_data.argsort()[::-1]
+        #edge_weights = self.affmat_data[argsort]
+        argsort = aff_mat.data.argsort()[::-1]
+        edge_weights = aff_mat.data[argsort]
+        rows = self.affmat_rows[patch_indexes]
+        cols = self.affmat_cols[patch_indexes]
+        vertices = list(zip(rows[argsort],cols[argsort]))
+        npatches = len(patch_indexes)
+        uf = fh_union_find(npatches, k=self.fh_k)
+        nclusters = npatches
+        for ew,v in zip(edge_weights,vertices):
+            #print(e,v)
+            v1,v2 = v
+            #if ew >= self.uf.MInt(v1,v2):
+            #    self.uf.union(v1,v2,weight=ew)
+            self.uf.union(v1,v2,weight=ew)
+            nclusters -= 1
+            if nclusters == 2:
+                break
+        labels = np.array([uf.find(x) for x in range(npatches)])
+        vlabels = np.unique(labels)
+        nlabels = vlabels.size
+        if nlabels != 2:
+            print(vlabels)
+            raise Exception("There should be exactly 2 clusters")
+        lsamples = (labels == vlabels[0]).nonzero()[0]
+        rsamples = (labels != vlabels[1]).nonzero()[0]
+        return(lsamples,rsamples,None)
+                           
+    def _cluster_tree(self,patch_indexes):
+        #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
+        aff_mat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
+        #argsort = self.affmat_data.argsort()[::-1]
+        #edge_weights = self.affmat_data[argsort]
+        argsort = aff_mat.data.argsort()[::-1]
+        edge_weights = aff_mat.data[argsort]
         vertices = list(zip(np.array(self.affmat_rows)[argsort],(np.array(self.affmat_cols)[argsort])))
         self.uf = fh_union_find(len(self.samples), k=self.fh_k)
         nclusters = len(self.samples)
@@ -1298,11 +1303,8 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
             nclusters -= 1
             if nclusters == 2:
                 break
-            
-    def tree_cluster(self):
-        """Returns a hierarchical_dict using the inherent tree structure in the Felzenszwalb-Huttenlocher algorithm"""
+        labels = np.array([self.uf.find(x) for x in range()])
 
-        pass
          
         
 class hierarchical_dict(Oc_Dict):
@@ -1321,7 +1323,9 @@ class hierarchical_dict(Oc_Dict):
         elif clustering_method == 'spectral':
             self.clustering = spectral_clustering(self.patches,spectral_sim_measure,simbeta,affthreshold)
         elif clustering_method == 'fh':
-            self.clustering = felzenszwalb_huttenlocher_clustering(self.patches)
+            self.clustering = felzenszwalb_huttenlocher_clustering(self.patches,spectral_sim_measure,simbeta,affthreshold)
+        elif clustering_method == 'monkey':
+            self.clustering = monkey_clustering(self.patches)
         else:
             raise Exception('clustering_method must be either \'twomeans\',\'spectral\' or \'fh\'')
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
@@ -1404,7 +1408,7 @@ class hierarchical_dict(Oc_Dict):
         else:
             raise Exception("dicttype must be either 'haar' or 'centroids'")
         self._dictelements_to_matrix()
-        self.cardinality = len(self.dictelements)
+        self.dictsize = len(self.dictelements)
         
     def _tree2dict_centroids(self, normalize=True):
         leafs = self.leafs
@@ -1457,30 +1461,28 @@ class hierarchical_dict(Oc_Dict):
         self.haar_matrix = np.vstack([x.flatten() for x in self.haar_dictelements]).transpose()
         self.haar_matrix,self.haar_normalization_coefficients = normalize_matrix(self.haar_matrix)
         
-
-        
 class ksvd_dict(Oc_Dict):
     """Computes dictionary using KSVD method."""
     
-    def __init__(self,patch_list,dictsize,sparsity,maxiter=8,implementation='ksvdbox'):
+    def __init__(self,patch_list,dictsize,sparsity,maxiter=8):
         Oc_Dict.__init__(self,patch_list)
         self.npatches = len(patch_list)
-        self.patch_size = self.patches[0].shape
         self.dictsize = dictsize
         self.sparsity = sparsity
         self.maxiter = maxiter
-        self.implementation = implementation
         from oct2py import octave
         self.octave = octave
-        self.octave.addpath('ksvdbox/')
-        self.octave.addpath('ompbox/')
-        self.octave.addpath(implementation+'/')
-        self.compute()
+        #self.octave.addpath(implementation+'/')
         self.useksvdencoding = True
 
 
+    def compute(self):
+        self._ksvdbox()
+        #self._ksvd()
+
     def _ksvd(self):
         """ Requires KSVD.m file"""
+        
         #from oct2py import octave
         param = {'InitializationMethod': 'DataElements',
                  'K': self.dictsize,
@@ -1491,18 +1493,21 @@ class ksvd_dict(Oc_Dict):
                  'preserveDCAtom': 1}
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
-        #octave.addpath('ksvd')
+        self.octave.addpath('ksvd')
         Y = patches2matrix(self.patches)
         #octave.addpath('../ksvd')
         D = self.octave.KSVD(Y,param)
         self.matrix = D
         self.dictelements = []
-        rows,cols = self.patches[0].shape
+        rows,cols = self.patches_shape
         for j in range(K):
             self.dictelements.append(D[:,j].reshape(rows,cols))
         
     def _ksvdbox(self):
         """Requires ksvdbox matlab package"""
+
+        self.octave.addpath('ompbox/')
+        self.octave.addpath('ksvdbox/')
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
         Y = patches2matrix(self.patches)
@@ -1519,12 +1524,7 @@ class ksvd_dict(Oc_Dict):
         self.encoding = X.todense()
         self.matrix = D
         self.dictelements = []
-        rows,cols = self.patches[0].shape
+        rows,cols = self.patches_shape
         for j in range(self.dictsize):
             self.dictelements.append(D[:,j].reshape(rows,cols))
 
-    def _compute(self):
-        if self.implementation == 'ksvdbox':
-            self._ksvdbox()
-        elif self.implementation == 'ksvd':
-            self._ksvd()

@@ -42,7 +42,8 @@ meth = '2ddict'
 #meth = 'ksvd'
 #test_meths = ['ksvd']
 #clust = 'twomeans'
-clust = 'spectral'
+#clust = 'spectral'
+clust = 'fh'
 
 dictsize = 50
 #dictsize = None
@@ -63,7 +64,7 @@ cluster_epsilon = None
 spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
 #spectral_similarity = 'frobenius'
-affinity_matrix_threshold = 0.65
+affinity_matrix_threshold = 0.5
 simmeasure_beta = 1 #only for Frobenius and EMD similarity measures
 
 #TRANSFORMS
@@ -85,8 +86,8 @@ ksvd_sparsity = sparsity
 dictionaries = {}
 reconstructed = {}
 dwtd = False
-if rec_transf is not None:
-    dwtd = True
+#if rec_transf is not None:
+#    dwtd = True
 
 ### PLOTTING
 #show_sc_egvs = True
@@ -146,8 +147,8 @@ def print_test_parameters(dictionary,learn_time,rec_time):
             desc_string += '\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (clust,dictionary.tree_depth,dictionary.tree_sparsity)
         if clust == 'spectral':
             desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
-    if rec_transf is not None:
-        desc_string += '\nReconstruction transform: %s' % (rec_transf)
+    #if rec_transf is not None:
+    #    desc_string += '\nReconstruction transform: %s' % (rec_transf)
 
     print(desc_string)
 
@@ -177,7 +178,7 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
     if firstorgline:
         print('\n')
         print(orgmode_table_line(['Method','K','Mutual Coherence', 'Entropy','PSNR','HaarPSI']))
-    print(orgmode_table_line([meth_string,dictionary.cardinality,mcstring,ent,psnrval,hpi]))
+    print(orgmode_table_line([meth_string,dictionary.dictsize,mcstring,ent,psnrval,hpi]))
 
 
 def print_and_save_figures(dictionary,img,rec,coefs,tag):
@@ -212,7 +213,7 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
     print(orgmode_str)
     plt.close()
 
-    mostused = min(dictionary.cardinality,50)
+    mostused = min(dictionary.dictsize,50)
     mostusedatoms = savename+'-mostused.png'
     orgmode_str = '**** %s %d most used atoms\n[[file:%s]]' % (tag,mostused,mostusedatoms)
     if save:
