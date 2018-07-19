@@ -61,9 +61,9 @@ cluster_epsilon = None
 #cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
-spectral_similarity = 'haarpsi'
+#spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
-#spectral_similarity = 'frobenius'
+spectral_similarity = 'frobenius'
 affinity_matrix_threshold = 0.5
 simmeasure_beta = 1 #only for Frobenius and EMD similarity measures
 

@@ -375,6 +375,8 @@ def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
             cols.append(j)
         counter += 1
     print('\n %.2f percentage of the similarities is above the threshold' % (100*len(data)/sumsupto(len(samples))))
+    if len(rows) < nsamples or len(cols) < nsamples:
+        raise Exception("Threshold is set to high: there are isolated vertices")
     data = np.array(data)
     #data,rows,cols = _compute_diss_rows_cols(diss)
     #thresholded_data = data.copy()
@@ -1118,6 +1120,7 @@ class fh_union_find():
         self.cardinality = list(np.ones(n))
         self.k = k
         self.n = n
+        self.nclusters = n
 
     def find(self, i):
         """
@@ -1147,6 +1150,7 @@ class fh_union_find():
             self.parent[i] = j
             self.cardinality[j] += self.cardinality[i]
             self.Int[j] = min(self.Int[i], min(self.Int[j], weight))
+            self.nclusters -= 1
 
     def issame(self, i, j):
         """
@@ -1231,7 +1235,7 @@ class fh_union_find():
 class felzenszwalb_huttenlocher_clustering(Cluster):
     """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
 
-    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5):
+    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,k=1):
         """	samples: patches to cluster
     		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
         	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
@@ -1242,6 +1246,7 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
 
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
         self._compute_affinity_matrix()
+        self.k = k
 
 
     def cluster(self,patch_indexes):
@@ -1259,20 +1264,39 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
         #edge_weights = self.affmat_data[argsort]
         argsort = aff_mat.data.argsort()[::-1]
         edge_weights = aff_mat.data[argsort]
-        rows = self.affmat_rows[patch_indexes]
-        cols = self.affmat_cols[patch_indexes]
-        vertices = list(zip(rows[argsort],cols[argsort]))
+        #rows = self.affmat_rows[patch_indexes]
+        #cols = self.affmat_cols[patch_indexes]
+        rows = []
+        for r in self.affmat_rows:
+            if r in patch_indexes:
+                rows.append(r)
+        cols = []
+        for r in self.affmat_cols:
+            if r in patch_indexes:
+                cols.append(r)
+        rows = np.array(rows)
+        cols = np.array(cols)
+        #print(rows,cols)
+        #print(len(rows),len(cols))
+        #vertices = list(zip(rows[argsort],cols[argsort]))
+        #vertices = list(itertools.combinations(range(len(self.affmat_rows)),2))
+        #vertices = np.array(list(zip(self.affmat_rows,self.affmat_cols)))[patch_indexes]
+        #edges  = np.array(list(itertools.combinations(range(len(rows)),2)))[argsort]
+        edges = np.array(list(zip(rows,cols)))[argsort]
         npatches = len(patch_indexes)
-        uf = fh_union_find(npatches, k=self.fh_k)
-        nclusters = npatches
-        for ew,v in zip(edge_weights,vertices):
-            #print(e,v)
-            v1,v2 = v
+        uf = fh_union_find(npatches, k=self.k)
+        for ew,e in zip(edge_weights,edges):
+            v1,v2 = e
+            #print(uf.nclusters,ew,e,self.affinity_matrix[v1,v2])
+            #sanity check:
+            #if self.affinity_matrix[v1,v2] != ew:
+            #    ipdb.set_trace()
             #if ew >= self.uf.MInt(v1,v2):
             #    self.uf.union(v1,v2,weight=ew)
-            self.uf.union(v1,v2,weight=ew)
-            nclusters -= 1
-            if nclusters == 2:
+            #if uf.find(v1) == uf.find(v2):
+            #    continue
+            uf.union(v1,v2,weight=ew)
+            if uf.nclusters == 2:
                 break
         labels = np.array([uf.find(x) for x in range(npatches)])
         vlabels = np.unique(labels)
@@ -1282,6 +1306,7 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
             raise Exception("There should be exactly 2 clusters")
         lsamples = (labels == vlabels[0]).nonzero()[0]
         rsamples = (labels != vlabels[1]).nonzero()[0]
+        ipdb.set_trace()
         return(lsamples,rsamples,None)
                            
     def _cluster_tree(self,patch_indexes):
@@ -1315,15 +1340,18 @@ class hierarchical_dict(Oc_Dict):
         self.npatches = len(patch_list)
         self.dicttype = 'haar'
 
-    def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5,spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5):
+    def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5,\
+                spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5,fh_k=1):
         if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
         if clustering_method == 'twomeans':
             self.clustering = twomeans_clustering(self.patches)
         elif clustering_method == 'spectral':
-            self.clustering = spectral_clustering(self.patches,spectral_sim_measure,simbeta,affthreshold)
+            self.clustering = spectral_clustering(self.patches,similarity_measure=spectral_sim_measure,\
+                                                  simmeasure_beta=simbeta,affinity_matrix_threshold=affthreshold)
         elif clustering_method == 'fh':
-            self.clustering = felzenszwalb_huttenlocher_clustering(self.patches,spectral_sim_measure,simbeta,affthreshold)
+            self.clustering = felzenszwalb_huttenlocher_clustering(self.patches,similarity_measure=spectral_sim_measure,\
+                                                                   simmeasure_beta=simbeta,affinity_matrix_threshold=affthreshold,k=fh_k)
         elif clustering_method == 'monkey':
             self.clustering = monkey_clustering(self.patches)
         else:
