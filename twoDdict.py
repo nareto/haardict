@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import minimum_spanning_tree
 import scipy.sparse.linalg as sslinalg
 import skimage.io
 import skimage.color
@@ -33,8 +34,8 @@ from haarpsi import haar_psi
 _METHODS_ = ['2ddict','ksvd']
 _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
-_MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-3
-_MAX_SIGNIFICATIVE_MACHINE_NUMBER = 1e3
+_MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-12
+_MAX_SIGNIFICATIVE_MACHINE_NUMBER = 1e12
 
 LAST_TIC = dt.datetime.now()
 def tic():
@@ -378,42 +379,49 @@ def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
     if len(rows) < nsamples or len(cols) < nsamples:
         raise Exception("Threshold is set to high: there are isolated vertices")
     data = np.array(data)
-    #data,rows,cols = _compute_diss_rows_cols(diss)
-    #thresholded_data = data.copy()
-    #data.sort()
-    #thresh = data[int(affinity_matrix_threshold_perc*len(data))]
-    #removed = 0
-    #for i,d in enumerate(data):
-    #    if d > thresh:
-    #        idx = i-removed
-    #        thresholded_data = thresholded_data[:idx] + thresholded_data[idx+1:]
-    #        rows = rows[:idx] + rows[idx+1:]
-    #        cols = cols[:idx] + cols[idx+1:]
-    #        removed += 1
-    #data = np.array(thresholded_data)
-    #diss_data = data
-    #avgd = data.mean()
-    #vard = np.sqrt(data.var())
-    #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER*_MAX_SIGNIFICATIVE_MACHINE_NUMBER))/(2*(avgd - 5*vard))
-    #beta = -(np.log(_MIN_SIGNIFICATIVE_MACHINE_NUMBER))/(avgd - 3*vard)
-    #print('\navgd = %f\n vard = %f\n beta = %f' % (avgd,vard,beta))
-    #data /= data.max()
-    #beta = 4
-    #exp_data = np.exp(-beta*data)
-    #expaff_mat = csr_matrix((exp_data,(rows,cols)),shape=(nsamples,nsamples))
-    #print('...done')
-    #expaff_mat = expaff_mat + expaff_mat.transpose()
-    #affinity_matrix = expaff_mat
-    #print(len(affinity_matrix.data)/(affinity_matrix.shap
-    #return(expaff_mat)
 
     aff_mat = csr_matrix((data,(rows,cols)),shape=(nsamples,nsamples))
     if symmetric:
         aff_mat = aff_mat + aff_mat.transpose() #make it symmetrical
     #print(len(affinity_matrix.data)/(affinity_matrix.shap
     return(aff_mat,data,np.array(rows),np.array(cols))
-    
-    
+
+def complete_affinity_matrix(affmat,samples,similarity_measure,symmetric=True):
+    """Fills in affmat so that the corresponding graph has one connected component"""
+
+    nsamples = len(samples)
+    data = []
+    rows = []
+    cols = []
+    abovethresh = queue.PriorityQueue()
+    uf = fh_union_find(nsamples)
+    for i,j in itertools.combinations(range(nsamples),2):
+        val = affmat[i,j]
+        if val != 0:
+            uf.union(i,j)
+        else:
+            val = similarity_measure(samples[i], samples[j])
+            abovethresh.put((1-val,(i,j)))
+    while not abovethresh.empty():
+        d,coord = abovethresh.get()
+        i,j = coord
+        if not uf.union(i,j):
+            val = 1-d
+            if val == 0:
+                val = _MIN_SIGNIFICATIVE_MACHINE_NUMBER
+            data.append(val)
+            rows.append(i)
+            cols.append(j)
+    #theoretically this next if should never trigger
+    data = np.array(data)
+
+    new_affmat = csr_matrix((data,(rows,cols)),shape=(nsamples,nsamples))
+    if symmetric:
+        new_affmat = new_affmat + new_affmat.transpose() #make it symmetrical
+    #print(len(affinity_matrix.data)/(affinity_matrix.shap
+    new_affmat += affmat
+    return(new_affmat,data,np.array(rows),np.array(cols))    
+
 
 def covariance_matrix(patches):
     """Computes generalized covariance matrix of arrays in patches"""
@@ -619,16 +627,22 @@ class Cluster(Saveable):
         self.data_dim = self.samples[0].size
         self.nsamples = len(samples)
 
-    def _compute_affinity_matrix(self,**args):
+    def _compute_affinity_matrix(self,one_connected_component=False,**args):
         if self.similarity_measure == 'haarpsi':
-            sim = simmeasure_haarpsi()
+            self.simmeasure = simmeasure_haarpsi()
         elif self.similarity_measure == 'frobenius':
-            sim = simmeasure_frobenius(beta=self.simmeasure_beta,samples=self.samples)
+            self.simmeasure = simmeasure_frobenius(beta=self.simmeasure_beta,samples=self.samples)
         elif self.similarity_measure == 'emd':
-            sim  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,samples=self.samples)
-
-        self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,sim,self.affinity_matrix_threshold,args)
-        #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
+            self.simmeasure  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,samples=self.samples)
+        if one_connected_component:
+            first_affmat,first_data,first_rows,first_cols = affinity_matrix(self.samples,self.simmeasure,self.affinity_matrix_threshold,args)
+            self.affinity_matrix,second_data,second_rows,second_cols = complete_affinity_matrix(first_affmat,self.samples,self.simmeasure,args)
+            self.affmat_data = np.hstack((first_data,second_data))
+            self.affmat_rows = np.hstack((first_rows,second_rows))
+            self.affmat_cols = np.hstack((first_cols,second_cols))
+        else:
+            self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,self.simmeasure,self.affinity_matrix_threshold,args)
+            #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
         self.affinity_matrix_nonzero_perc = len(self.affinity_matrix.data)/self.nsamples**2
 
     def get_node(self,idstr):
@@ -1151,6 +1165,9 @@ class fh_union_find():
             self.cardinality[j] += self.cardinality[i]
             self.Int[j] = min(self.Int[i], min(self.Int[j], weight))
             self.nclusters -= 1
+            return(0)
+        else:
+            return(1)
 
     def issame(self, i, j):
         """
@@ -1245,48 +1262,68 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
         self.affinity_matrix_threshold = affinity_matrix_threshold
 
         self.cluster_matrix = patches2matrix(self.samples).transpose()        
-        self._compute_affinity_matrix()
+        self._compute_affinity_matrix(one_connected_component=True)
+        #self._compute_mst()
         self.k = k
 
 
     def cluster(self,patch_indexes):
-        #if not hasattr(self,'affinity_matrix'):
-        #    self._compute_affinity_matrix(symmetric=False)
         return(self._cluster(patch_indexes))
-        #return(self._cluster_tree(patch_indexes))    
         
     def _cluster(self,patch_indexes):
         """Returns a hierarchical_dict using the inherent tree structure in the Felzenszwalb-Huttenlocher algorithm"""
 
-        #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
-        aff_mat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
-        #argsort = self.affmat_data.argsort()[::-1]
-        #edge_weights = self.affmat_data[argsort]
-        argsort = aff_mat.data.argsort()[::-1]
-        edge_weights = aff_mat.data[argsort]
-        #rows = self.affmat_rows[patch_indexes]
-        #cols = self.affmat_cols[patch_indexes]
-        rows = []
-        for r in self.affmat_rows:
-            if r in patch_indexes:
-                rows.append(r)
-        cols = []
-        for r in self.affmat_cols:
-            if r in patch_indexes:
-                cols.append(r)
-        rows = np.array(rows)
-        cols = np.array(cols)
-        #print(rows,cols)
-        #print(len(rows),len(cols))
-        #vertices = list(zip(rows[argsort],cols[argsort]))
-        #vertices = list(itertools.combinations(range(len(self.affmat_rows)),2))
-        #vertices = np.array(list(zip(self.affmat_rows,self.affmat_cols)))[patch_indexes]
-        #edges  = np.array(list(itertools.combinations(range(len(rows)),2)))[argsort]
-        edges = np.array(list(zip(rows,cols)))[argsort]
         npatches = len(patch_indexes)
+        affmat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
+        new_affmat,data,rows,cols = complete_affinity_matrix(affmat,self.samples[patch_indexes],self.simmeasure)
+        absrows,abscols = [],[]
+        #rows and cols are given for the submatrix affmat: we want the absolute indexes for self.affinity_matrix
+        if len(rows) > 0:
+            for idx, p in enumerate(patch_indexes):
+                absrows.append(p + rows[idx])
+                abscols.append(p + cols[idx])
+        self.affinity_matrix[patch_indexes,:][:,patch_indexes] = new_affmat
+        self.affmat_data = np.hstack((self.affmat_data,data))
+        self.affmat_rows = np.hstack((self.affmat_rows,absrows))
+        self.affmat_cols = np.hstack((self.affmat_cols,abscols))
+        affmat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
+        
+        #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
+        ##argsort = self.affmat_data.argsort()[::-1]
+        ##edge_weights = self.affmat_data[argsort]
+        #argsort = affmat.data.argsort()[::-1]
+        #edge_weights = affmat.data[argsort]
+        ##rows = self.affmat_rows[patch_indexes]
+        ##cols = self.affmat_cols[patch_indexes]
+        #rows = []
+        #for r in self.affmat_rows:
+        #    if r in patch_indexes:
+        #        rows.append(r)
+        #cols = []
+        #for r in self.affmat_cols:
+        #    if r in patch_indexes:
+        #        cols.append(r)
+        #rows = np.array(rows)
+        #cols = np.array(cols)
+        ##print(rows,cols)
+        ##print(len(rows),len(cols))
+        ##vertices = list(zip(rows[argsort],cols[argsort]))
+        ##vertices = list(itertools.combinations(range(len(self.affmat_rows)),2))
+        ##vertices = np.array(list(zip(self.affmat_rows,self.affmat_cols)))[patch_indexes]
+        ##edges  = np.array(list(itertools.combinations(range(len(rows)),2)))[argsort]
+        edges = []
+        for idx,e in enumerate(zip(self.affmat_rows,self.affmat_cols)):
+            i,j = e
+            if i in patch_indexes and j in patch_indexes:
+                edges.append((self.affinity_matrix[i,j],e))
+        edges = sorted(edges,key=lambda x: x[0])
+        edges.reverse()
+        #edges = np.array(list(zip(rows,cols)))[argsort]
         uf = fh_union_find(npatches, k=self.k)
-        for ew,e in zip(edge_weights,edges):
+        for ew,e in edges:
             v1,v2 = e
+            v1 = v1.astype('int')
+            v2 = v2.astype('int')
             #print(uf.nclusters,ew,e,self.affinity_matrix[v1,v2])
             #sanity check:
             #if self.affinity_matrix[v1,v2] != ew:
@@ -1305,8 +1342,8 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
             print(vlabels)
             raise Exception("There should be exactly 2 clusters")
         lsamples = (labels == vlabels[0]).nonzero()[0]
-        rsamples = (labels != vlabels[1]).nonzero()[0]
-        ipdb.set_trace()
+        rsamples = (labels == vlabels[1]).nonzero()[0]
+        #ipdb.set_trace()
         return(lsamples,rsamples,None)
                            
     def _cluster_tree(self,patch_indexes):
