@@ -5,17 +5,17 @@ import copy
 
 np.random.seed(123)
 
-save = False
-#save = True
+#save = False
+save = True
 
-#figures = True
-figures = False
-testid = 'newhcstructure'
+figures = True
+#figures = False
+testid = 'felz-hutt'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
-#base_save_dir = '/Users/renato/tmp/'
-base_save_dir = '/Users/renato/nextcloud/phd/'
+base_save_dir = '/Users/renato/tmp/'
+#base_save_dir = '/Users/renato/nextcloud/phd/'
 save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
@@ -44,6 +44,7 @@ meth = '2ddict'
 #clust = 'twomeans'
 #clust = 'spectral'
 clust = 'fh'
+#clust = 'random'
 
 dictsize = 50
 #dictsize = None

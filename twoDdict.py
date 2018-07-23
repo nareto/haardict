@@ -375,7 +375,7 @@ def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
             rows.append(i)
             cols.append(j)
         counter += 1
-    print('\n %.2f percentage of the similarities is above the threshold' % (100*len(data)/sumsupto(len(samples))))
+    print('\n %.2f percentage of the affinity matrix entries are non-null' % (100*len(data)/sumsupto(len(samples))))
     if len(rows) < nsamples or len(cols) < nsamples:
         raise Exception("Threshold is set to high: there are isolated vertices")
     data = np.array(data)
@@ -497,6 +497,8 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
     clustering: the clustering used (only for 2ddict method):
     	- 2means: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
+	- fh: Felzenszwalb-Huttenlocher clustering (slower)
+	- random: random clustering
     cluster_epsilon: threshold for clustering (lower = finer clustering)
     spectral_similarity: similarity measure used for spectral clustering. Can be 'frobenius','haarpsi' or 'emd' (earth's mover distance)
     simmeasure_beta: beta parameter for Frobenius and Earth Mover's distance similarity measures
@@ -719,6 +721,7 @@ class Cluster(Saveable):
         
 class Oc_Dict(Saveable):
     """Dictionary"""
+    
     def __init__(self,patch_list):
         self.patches = np.array(patch_list)
         #self.matrix = matrix
@@ -727,7 +730,9 @@ class Oc_Dict(Saveable):
         #self.patches_dim = patches_dim
         #if patches_dim is not None:
         #    self.twod_dict = True
-        self.patches_shape = self.patches[0].shape
+        self.atom_dim = self.patches[0].size
+        self.patch_size = self.patches[0].shape
+        self.npatches = len(patch_list)
 
 
     #def _compute(self):
@@ -755,7 +760,7 @@ class Oc_Dict(Saveable):
             md = sim(d,self.patches[0])
             for p in self.patches:
                 if progress:
-                    print('\r%d/%d' % (counter + 1,len(self.patches)*self.cardinality), sep=' ',end='',flush=True)
+                    print('\r%d/%d' % (counter + 1,len(self.patches)*self.dictsize), sep=' ',end='',flush=True)
                 md = min(md,sim(d,p))
                 counter += 1
             max_sim.append(md)
@@ -874,11 +879,11 @@ class Oc_Dict(Saveable):
             s = int(np.sqrt(self.atom_dim))
             patch_shape = (s,s)
         if shape is None:
-            l = int(np.sqrt(self.cardinality))
+            l = int(np.sqrt(self.dictsize))
             shape = (min(10,l),min(10,l))
         rows,cols = shape
-        if self.cardinality < 15:
-            rows,cols = (1,self.cardinality)
+        if self.dictsize < 15:
+            rows,cols = (1,self.dictsize)
         #if not hasattr(self,'atom_patches'):
         self.atom_patches = [col.reshape(patch_shape) for col in self.matrix.transpose()]
         #self.atoms_by_var = sorted(self.atom_patches,key=lambda x: x.var(),reverse=False)[:rows*cols]
@@ -1206,53 +1211,11 @@ class fh_union_find():
         """
         return self.k / self.cardinality[i]
         
-    def toImage(self, shape):
-        """
-        Converts the unionfind-structure to an Image of lables.
-        For that the shape of the image has to be specified.
-        This method only works if the labels correspond to the vertices
-        increasing row by row and column by column (sorted Vertex set).
-        Args:
-        shape:	shape of the original image and also resulting label image
-        Returns:
-        image (np.ndarray) of the lables in current segmentation state
-        """
-        labels = np.asarray([self.find(x) for x in range(self.n)]).reshape(shape)
-        if DEBUG:
-            print("labels")
-            print(labels)
-            print("cardinality")
-            print(np.asarray([self.cardinality[i] if i==self.find(i) else 0 for i in
-                              range(self.n)], dtype=np.int32).reshape(shape))
-            print("Int")
-            print(np.asarray(self.Int).reshape(shape))
-            return labels
-
-    def toLabelList(self):
-        """
-        Converts the unionfind-structure to a list of lists containing
-        member indices for each component. Each index is uniquely matched
-        to one of the components (at most n).
-        Returns:
-        list of lists, each holding member indices for each component
-        """
-        components = []
-        result = []
-        num = len(self.parent)
-        for i in range(num):
-            components.append([])
-        for i in range(num):
-            components[self.find(i)].append(i)
-        for entry in components:
-            if entry:				# = so if not empty
-                result.append(entry)
-        return result
-
             
 class felzenszwalb_huttenlocher_clustering(Cluster):
     """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
 
-    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,k=1):
+    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,k=10):
         """	samples: patches to cluster
     		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
         	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
@@ -1287,30 +1250,9 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
         self.affmat_rows = np.hstack((self.affmat_rows,absrows))
         self.affmat_cols = np.hstack((self.affmat_cols,abscols))
         affmat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
-        
-        #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
-        ##argsort = self.affmat_data.argsort()[::-1]
-        ##edge_weights = self.affmat_data[argsort]
-        #argsort = affmat.data.argsort()[::-1]
-        #edge_weights = affmat.data[argsort]
-        ##rows = self.affmat_rows[patch_indexes]
-        ##cols = self.affmat_cols[patch_indexes]
-        #rows = []
-        #for r in self.affmat_rows:
-        #    if r in patch_indexes:
-        #        rows.append(r)
-        #cols = []
-        #for r in self.affmat_cols:
-        #    if r in patch_indexes:
-        #        cols.append(r)
-        #rows = np.array(rows)
-        #cols = np.array(cols)
-        ##print(rows,cols)
-        ##print(len(rows),len(cols))
-        ##vertices = list(zip(rows[argsort],cols[argsort]))
-        ##vertices = list(itertools.combinations(range(len(self.affmat_rows)),2))
-        ##vertices = np.array(list(zip(self.affmat_rows,self.affmat_cols)))[patch_indexes]
-        ##edges  = np.array(list(itertools.combinations(range(len(rows)),2)))[argsort]
+        enu_pi = {}
+        for i,pi in enumerate(patch_indexes):
+            enu_pi[pi]  = i
         edges = []
         for idx,e in enumerate(zip(self.affmat_rows,self.affmat_cols)):
             i,j = e
@@ -1318,21 +1260,12 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
                 edges.append((self.affinity_matrix[i,j],e))
         edges = sorted(edges,key=lambda x: x[0])
         edges.reverse()
-        #edges = np.array(list(zip(rows,cols)))[argsort]
         uf = fh_union_find(npatches, k=self.k)
         for ew,e in edges:
             v1,v2 = e
             v1 = v1.astype('int')
             v2 = v2.astype('int')
-            #print(uf.nclusters,ew,e,self.affinity_matrix[v1,v2])
-            #sanity check:
-            #if self.affinity_matrix[v1,v2] != ew:
-            #    ipdb.set_trace()
-            #if ew >= self.uf.MInt(v1,v2):
-            #    self.uf.union(v1,v2,weight=ew)
-            #if uf.find(v1) == uf.find(v2):
-            #    continue
-            uf.union(v1,v2,weight=ew)
+            uf.union(enu_pi[v1],enu_pi[v2],weight=ew)
             if uf.nclusters == 2:
                 break
         labels = np.array([uf.find(x) for x in range(npatches)])
@@ -1343,7 +1276,6 @@ class felzenszwalb_huttenlocher_clustering(Cluster):
             raise Exception("There should be exactly 2 clusters")
         lsamples = (labels == vlabels[0]).nonzero()[0]
         rsamples = (labels == vlabels[1]).nonzero()[0]
-        #ipdb.set_trace()
         return(lsamples,rsamples,None)
                            
     def _cluster_tree(self,patch_indexes):
@@ -1373,8 +1305,6 @@ class hierarchical_dict(Oc_Dict):
 
     def __init__(self,patch_list):
         Oc_Dict.__init__(self,patch_list)
-        self.patch_size = self.patches[0].shape
-        self.npatches = len(patch_list)
         self.dicttype = 'haar'
 
     def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5,\
@@ -1389,7 +1319,7 @@ class hierarchical_dict(Oc_Dict):
         elif clustering_method == 'fh':
             self.clustering = felzenszwalb_huttenlocher_clustering(self.patches,similarity_measure=spectral_sim_measure,\
                                                                    simmeasure_beta=simbeta,affinity_matrix_threshold=affthreshold,k=fh_k)
-        elif clustering_method == 'monkey':
+        elif clustering_method == 'random':
             self.clustering = monkey_clustering(self.patches)
         else:
             raise Exception('clustering_method must be either \'twomeans\',\'spectral\' or \'fh\'')
@@ -1424,7 +1354,8 @@ class hierarchical_dict(Oc_Dict):
                     curlsamples, currsamples, clust_ret_val = self.clustering.cluster(cur.samples_idx)
                 abs_lsamples = cur.samples_idx[curlsamples]
                 abs_rsamples = cur.samples_idx[currsamples]
-                if self.visit == 'priority' or clust_ret_val > self.clust_epsilon: #decide whether or not to branch
+                minsize = min(len(abs_lsamples),len(abs_rsamples))
+                if minsize > 0 and (self.visit == 'priority' or clust_ret_val > self.clust_epsilon): #decide whether or not to branch
                     if self.visit == 'priority':
                         #lwcss = len(lsamples_idx)*np.var([self.samples[k] for k in lsamples_idx])
                         lvar = np.var(self.patches[abs_lsamples])
@@ -1458,7 +1389,6 @@ class hierarchical_dict(Oc_Dict):
         self._tree2dict_centroids(normalize)
         self._tree2dict_haar(normalize)
         self.set_dicttype('haar') #set default dicttype
-
 
     def set_dicttype(self, dtype):
         self.dicttype = dtype
