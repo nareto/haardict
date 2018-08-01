@@ -10,21 +10,22 @@ save = True
 
 figures = True
 #figures = False
-testid = 'felz-hutt'
+testid = 'noise'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
-base_save_dir = '/Users/renato/tmp/'
-#base_save_dir = '/Users/renato/nextcloud/phd/'
+#base_save_dir = '/Users/renato/tmp/'
+base_save_dir = '/Users/renato/nextcloud/phd/'
 save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
 #learnimgs = ['img/flowers_pool-rescale.npy']
 #learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
-learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
+#learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
+learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
 #codeimg = 'img/flowers_pool-rescale.npy'
-#codeimg = 'img/boat512.png'
-codeimg = 'img/landscape1-rescaled.jpg'
+codeimg = 'img/boat512.png'
+#codeimg = 'img/landscape1-rescaled.jpg'
 #learnimg = 'img/fprint1.png'
 #codeimg = 'img/fprint2.png'
 #codeimg = 'img/rocks_lake-rescaled.npy'
@@ -35,18 +36,20 @@ codeimg = 'img/landscape1-rescaled.jpg'
 #patch_size = (24,24)
 #patch_size = (32,32)
 patch_size = (8,8)
-#npatches = None
-npatches = 200
+npatches = None
+#npatches = 200
 sparsity = 3
-meth = '2ddict'
-#meth = 'ksvd'
+#meth = '2ddict'
+meth = 'ksvd'
 #test_meths = ['ksvd']
-#clust = 'twomeans'
+clust = 'twomeans'
 #clust = 'spectral'
-clust = 'fh'
+#clust = 'fh'
 #clust = 'random'
 
-dictsize = 50
+noise = 0.01
+
+dictsize = 200
 #dictsize = None
 cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
@@ -77,7 +80,7 @@ learn_transf = None
 #wav = 'db2'
 wav = 'haar'
 wavlev = 1
-tdpcal,tdpcar = 2,2
+tdpcal,tdpcar = 16,16
 mc = None
 compute_mutual_coherence = False
 
@@ -97,14 +100,14 @@ show_sc_egvs = False
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
 
-    dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,method=meth,dictsize=dictsize,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
+    dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,noisevar=noise,method=meth,dictsize=dictsize,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
 
     #print('Learned dictionary in %f seconds' % learn_time)
     #if meth == 'ksvd'  and (npatches is not None or len(learnimgs) > 1 or codeimg != learnimgs[0]) :
     dictionary.useksvdencoding = False
 
     ### RECONSTRUCT ###
-    rec,coefs,rec_time = reconstruct(dictionary,codeimg,patch_size,sparsity)
+    rec,coefs,rec_time,noisy_img = reconstruct(dictionary,codeimg,patch_size,sparsity,noisevar=noise)
     #print('Reconstructed image in %f seconds' % toc(0))
     #rec = rescale(rec,True)
     print_test_parameters(dictionary,learn_time,rec_time)
@@ -115,7 +118,7 @@ def main():
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')
         #tic()
-        rec2,coefs2,time = reconstruct(dictionary2,codeimg,patch_size,sparsity)
+        rec2,coefs2,time,noisy_img2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,noisevar=noise)
         #print('Reconstructed image in %f seconds' % toc(0))
         #rec = rescale(rec,True)
         print_rec_results(dictionary2,img,rec2,coefs2,False)
@@ -125,7 +128,7 @@ def main():
     else:
         tag = ''
     if figures:
-        print_and_save_figures(dictionary,img,rec,coefs,tag)
+        print_and_save_figures(dictionary,img,rec,coefs,tag,noisyimg=noisy_img)
         if meth == '2ddict':
             print_and_save_figures(dictionary2,img,rec2,coefs2,tag2)
         if show_sc_egvs:
@@ -139,8 +142,12 @@ def print_test_parameters(dictionary,learn_time,rec_time):
     #    desc_string += '\nMutual coherence: %f (from atoms %d and %d)' % (mc,argmc[0],argmc[1])
     if learn_transf is not None:
         desc_string += '\nLearning transform: %s' % (learn_transf)
-        if learn_transf is not '2dpca':
+        if learn_transf in ['wavelet','wavelet_packet']:
             desc_string += ' - %s' % wav
+        if learn_transf is '2dpca':
+            desc_string += ' - l = %d, r = %d' % (tdpcal,tdpcar)
+    if noise is not 0:
+        desc_string += '\nNoise variance: %f' % noise
     if meth == '2ddict':
         if dictionary.visit == 'fifo':
             desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.tree_depth,dictionary.tree_sparsity)
@@ -182,7 +189,7 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
     print(orgmode_table_line([meth_string,dictionary.dictsize,mcstring,ent,psnrval,hpi]))
 
 
-def print_and_save_figures(dictionary,img,rec,coefs,tag):
+def print_and_save_figures(dictionary,img,rec,coefs,tag,noisyimg=None):
     savename = save_prefix + '-%s-%s' % (meth,tag.rstrip(':'))
     savename += '-%dx%d' % patch_size
     if meth == '2ddict':
@@ -191,6 +198,14 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag):
         else:
             savename += '-spec_%s' % spectral_similarity
 
+    if noisyimg is not None:
+        nimg = savename+'-noisy_image.png'
+        plt.imshow(noisyimg)
+        if save:
+            plt.savefig(base_save_dir+nimg)
+        plt.close()
+        orgmode_str = '\n**** noisy image\n[[file:%s]]\n' % nimg
+        print(orgmode_str)
     recimg = savename+'-reconstructed_image.png'
     plt.imshow(rec)
     if save:

@@ -322,7 +322,7 @@ def extract_patches(array,size=(8,8)):
     vstep,hstep = size
     for j in range(0,width-hstep+1,hstep):
         for i in range(0,height-vstep+1,vstep):
-            subimg = array[i:i+vstep,j:j+hstep]
+            subimg = array[i:i+vstep,j:j+hstep].real
             ret.append(subimg)
     return(ret)
 
@@ -481,12 +481,13 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     else:
         plt.savefig(savefile)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',dictsize=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
     npatches: if an int, only this number of patches (out of the complete set extracted from the learning images) will be used for learning
     patch_size: size of the patches to be extracted
+    noisevar: variance of Gaussian noise to add to input images
     method: the chosen method. The possible choices are:
     	- 2ddict: 2ddict procedure 
     	- ksvd: uses the KSVD method
@@ -515,7 +516,12 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
         raise Exception("'transform' has to be on of %s" % _TRANSFORMS_)
     images = []
     for f in paths:
-        images.append(np_or_img_to_array(f,patch_size))
+        cleanimg = np_or_img_to_array(f,patch_size)
+        if noisevar == 0:
+            img = cleanimg
+        else:
+            img = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
+        images.append(img)
 
     patches = []
     for i in images:
@@ -537,7 +543,6 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
         transform_instance = dummy_transform(patches)
     data_to_cluster = transform_instance.transform() #tuple of transformed patches
     
-
     #BUILD DICT
     if method == '2ddict':
         dictionary = hierarchical_dict(data_to_cluster)
@@ -553,12 +558,19 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),method='2ddict',dictsize=Non
         dictionary.dictelements = transform_instance.reverse(dictionary.dictelements)
         dictionary._dictelements_to_matrix()
     time = toc(False)
+    #ipdb.set_trace()
     return(dictionary,time)
 
-def reconstruct(oc_dict,imgpath,psize,sparsity=5):
+def reconstruct(oc_dict,imgpath,psize,sparsity=5,noisevar=0):
     clip = False
     spars= sparsity
-    img = np_or_img_to_array(imgpath,psize)
+    cleanimg = np_or_img_to_array(imgpath,psize)
+    if noisevar == 0:
+        img = cleanimg
+        nimg = None
+    else:
+        img = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
+        nimg = img
     patches = extract_patches(img,psize)
 
     tic()
@@ -571,7 +583,7 @@ def reconstruct(oc_dict,imgpath,psize,sparsity=5):
     time = toc(False)
     if clip:
         reconstructed = clip(reconstructed)
-    return(reconstructed,coefs,time)        
+    return(reconstructed,coefs,time,nimg)        
 
 class Saveable():
     def save_pickle(self,filepath):
@@ -742,6 +754,7 @@ class Oc_Dict(Saveable):
     def _dictelements_to_matrix(self):
         self.matrix = np.vstack([x.flatten() for x in self.dictelements]).transpose()
         self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
+        self.atom_dim = self.matrix.shape[0]
 
     def max_similarities(self,similarity_measure='frobenius',progress=True):
         """Computes self.max_sim, array of maximum similarities between dictionary atoms and input patches"""
@@ -927,10 +940,10 @@ class twodpca_transform(Transform):
         self._compute_vertical_2dpca()
     
     def _compute_feature_matrix(self,patch):
-        return(np.dot(np.dot(self.V.transpose(),patch),self.U))
+        return(np.dot(np.dot(self.V.transpose(),patch),self.U).real)
 
     def _invert_feature_matrix(self,fmat):
-        return(np.dot(np.dot(self.V,fmat),self.U.transpose()))
+        return(np.dot(np.dot(self.V,fmat),self.U.transpose()).real)
 
     def _transform(self):
         self.transformed_patches = tuple([self._compute_feature_matrix(p) \
@@ -1519,7 +1532,7 @@ class ksvd_dict(Oc_Dict):
         self.encoding = X.todense()
         self.matrix = D
         self.dictelements = []
-        rows,cols = self.patches_shape
+        rows,cols = self.patch_size
         for j in range(self.dictsize):
             self.dictelements.append(D[:,j].reshape(rows,cols))
 
