@@ -10,7 +10,7 @@ save = True
 
 figures = True
 #figures = False
-testid = 'noise'
+testid = 'spectralvskmeans'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
@@ -32,24 +32,24 @@ codeimg = 'img/boat512.png'
 #codeimg = 'img/barbara.jpg'
 #learnimg = 'img/flowers_pool-small.npy'
 #codeimg = 'img/flowers_pool-small.npy'
-#patch_size = (16,16)
+patch_size = (16,16)
 #patch_size = (24,24)
 #patch_size = (32,32)
-patch_size = (8,8)
-npatches = None
-#npatches = 200
-sparsity = 3
-#meth = '2ddict'
-meth = 'ksvd'
+#patch_size = (8,8)
+#npatches = None
+npatches = 300
+sparsity = 5
+meth = '2ddict'
+#meth = 'ksvd'
 #test_meths = ['ksvd']
-clust = 'twomeans'
-#clust = 'spectral'
+#clust = 'twomeans'
+clust = 'spectral'
 #clust = 'fh'
 #clust = 'random'
 
-noise = 0.01
+noise = 0
 
-dictsize = 200
+dictsize = 85
 #dictsize = None
 cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
@@ -65,22 +65,23 @@ cluster_epsilon = None
 #cluster_epsilon = 1500
 
 #SPECTRAL CLUSTERING
-#spectral_similarity = 'haarpsi'
+
+spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
-spectral_similarity = 'frobenius'
+#spectral_similarity = 'frobenius'
 affinity_matrix_threshold = 0.5
-simmeasure_beta = 1 #only for Frobenius and EMD similarity measures
+simmeasure_beta = 0.5 #only for Frobenius and EMD similarity measures
 
 #TRANSFORMS
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet_packet'
-#learn_transf = '2dpca'
-learn_transf = None
+learn_transf = '2dpca'
+#learn_transf = None
 #wav = 'db2'
 wav = 'haar'
 wavlev = 1
-tdpcal,tdpcar = 16,16
+tdpcal,tdpcar = 8,8
 mc = None
 compute_mutual_coherence = False
 
@@ -113,7 +114,7 @@ def main():
     print_test_parameters(dictionary,learn_time,rec_time)
     #print('Reconstructed in %f seconds' % rec_time)
     #print('Total time: %f' % learn_time + rec_time)
-    print_rec_results(dictionary,rec,img,coefs)
+    print_rec_results(dictionary,rec,img,coefs,noisy_img=noisy_img)
     if meth == '2ddict':
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')
@@ -121,16 +122,16 @@ def main():
         rec2,coefs2,time,noisy_img2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,noisevar=noise)
         #print('Reconstructed image in %f seconds' % toc(0))
         #rec = rescale(rec,True)
-        print_rec_results(dictionary2,img,rec2,coefs2,False)
+        print_rec_results(dictionary2,img,rec2,coefs2,noisy_img=None,firstorgline=False)
     if meth == '2ddict':
         tag = dictionary.dicttype + ':'
         tag2 = dictionary2.dicttype + ':'
     else:
         tag = ''
     if figures:
-        print_and_save_figures(dictionary,img,rec,coefs,tag,noisyimg=noisy_img)
+        print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=noisy_img,simhist=True if (meth == '2ddict' and clust == 'spectral') else False)
         if meth == '2ddict':
-            print_and_save_figures(dictionary2,img,rec2,coefs2,tag2)
+            print_and_save_figures(dictionary2,img,rec2,coefs2,tag2,simhist=False)
         if show_sc_egvs:
             dictionary.clustering.plotegvecs()
 
@@ -161,9 +162,15 @@ def print_test_parameters(dictionary,learn_time,rec_time):
     print(desc_string)
 
     
-def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
-    hpi = haar_psi(255*img,255*rec)[0]
-    psnrval = psnr(img,rec)
+def print_rec_results(dictionary,img,rec,coefs,noisy_img=None,firstorgline=True):
+    if noisy_img is not None:
+        n_hpi = haar_psi(255*img,255*noisy_img)[0]
+        n_psnrval = psnr(img,noisy_img)
+    else:
+        n_hpi = '-'
+        n_psnrval = '-'
+    rec_hpi = haar_psi(255*img,255*rec)[0]
+    rec_psnrval = psnr(img,rec)
     ent = entropy(atoms_prob(coefs))
     if compute_mutual_coherence:
         dictionary.mutual_coherence(False)
@@ -185,22 +192,32 @@ def print_rec_results(dictionary,img,rec,coefs,firstorgline=True):
         meth_string = meth
     if firstorgline:
         print('\n')
-        print(orgmode_table_line(['Method','K','Mutual Coherence', 'Entropy','PSNR','HaarPSI']))
-    print(orgmode_table_line([meth_string,dictionary.dictsize,mcstring,ent,psnrval,hpi]))
+        print(orgmode_table_line(['Method','K','Mutual Coherence', 'Entropy','Noisy PSNR','Noisy HaarPSI','Reconstructed PSNR','Reconstructed HaarPSI']))
+        
+    print(orgmode_table_line([meth_string,dictionary.dictsize,mcstring,ent,n_psnrval,n_hpi,rec_psnrval,rec_hpi]))
 
 
-def print_and_save_figures(dictionary,img,rec,coefs,tag,noisyimg=None):
+def print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=None,simhist=False):
     savename = save_prefix + '-%s-%s' % (meth,tag.rstrip(':'))
     savename += '-%dx%d' % patch_size
     if meth == '2ddict':
-        if clust == '2means':
+        if clust == 'twomeans':
             savename += '-2means'
-        else:
+        elif clust == 'spectral':
             savename += '-spec_%s' % spectral_similarity
 
-    if noisyimg is not None:
+    if simhist:
+        nb = int(len(dictionary.patches)/5)
+        plt.hist(dictionary.clustering.affinity_matrix.data,bins=nb)
+        simhistpath = savename+'-similarities.png'
+        if save:
+            plt.savefig(base_save_dir+simhistpath)
+        plt.close()
+        orgmode_str= '**** similarity histograms\n[[file:%s]]\n' % (simhistpath)
+        print(orgmode_str)
+    if noisy_img is not None:
         nimg = savename+'-noisy_image.png'
-        plt.imshow(noisyimg)
+        plt.imshow(noisy_img)
         if save:
             plt.savefig(base_save_dir+nimg)
         plt.close()
@@ -213,15 +230,6 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag,noisyimg=None):
     plt.close()
     orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,recimg)
     print(orgmode_str)
-    if meth == '2ddict' and clust == 'spectral':
-        nb = int(len(dictionary.samples)/5)
-        plt.hist(dictionary.clustering.affinity_matrix.data,bins=nb)
-        simhist = savename+'-similarities.png'
-        if save:
-            plt.savefig(base_save_dir+simhist)
-        plt.close()
-        orgmode_str= '**** %s similarity histograms\n[[file:%s]]\n' % (tag,simhist)
-        print(orgmode_str)
     dictelements = savename+'-showdict.png'
     orgmode_str = '**** %s showdict\n[[file:%s]]\n' % (tag,dictelements)
     if save:

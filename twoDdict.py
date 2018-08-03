@@ -569,8 +569,8 @@ def reconstruct(oc_dict,imgpath,psize,sparsity=5,noisevar=0):
         img = cleanimg
         nimg = None
     else:
-        img = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
-        nimg = img
+        nimg = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
+        img = nimg
     patches = extract_patches(img,psize)
 
     tic()
@@ -640,6 +640,7 @@ class Cluster(Saveable):
         self.samples = samples
         self.data_dim = self.samples[0].size
         self.nsamples = len(samples)
+        self.patch_size = self.samples[0].shape
 
     def _compute_affinity_matrix(self,one_connected_component=False,**args):
         if self.similarity_measure == 'haarpsi':
@@ -1051,8 +1052,8 @@ class spectral_clustering(Cluster):
         self._compute_affinity_matrix()
         
     def cluster(self, patch_indexes):
-        #return(self._cluster_scikit(patch_indexes))
-        return(self._cluster_explicit(patch_indexes))
+        return(self._cluster_scikit(patch_indexes))
+        #return(self._cluster_explicit(patch_indexes))
 
     def _Ncut(self,W,y,D=None):
         if D is None:
