@@ -31,11 +31,9 @@ import datetime as dt
 #octave.addpath('ompbox/')
 from haarpsi import haar_psi
 
-_METHODS_ = ['2ddict','ksvd']
+_METHODS_ = ['2ddict','ksvd','warmstart']
 _TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
-_MIN_SIGNIFICATIVE_MACHINE_NUMBER = 1e-12
-_MAX_SIGNIFICATIVE_MACHINE_NUMBER = 1e12
 
 LAST_TIC = dt.datetime.now()
 def tic():
@@ -314,6 +312,24 @@ def entropy(array):
             ent += a*np.log2(a)
     return(-ent)
 
+def positional_string(encoding):
+    """Returns the positional string of a sparse encoding matrix"""
+    flat = encoding.transpose().flatten()
+    out = np.zeros_like(flat)
+    nz = flat.nonzero()[0]
+    for idx in nz:
+        out[idx] = 1
+    return(out)
+
+def storage_cost(dictionary, encoding, sparsity, bits=64):
+    """Returns the estimated storage cost of the D,X pair in bits"""
+
+    K,N = encoding.shape
+    n = dictionary.atom_dim
+    positional_entropy = entropy(positional_string(encoding))
+    out = K*n*bits + sparsity*N*bits + N*K*positional_entropy
+    return(out)
+
 def extract_patches(array,size=(8,8)):
     """Returns list of small arrays partitioning the input array. See also assemble_patches"""
     
@@ -408,7 +424,7 @@ def complete_affinity_matrix(affmat,samples,similarity_measure,symmetric=True):
         if not uf.union(i,j):
             val = 1-d
             if val == 0:
-                val = _MIN_SIGNIFICATIVE_MACHINE_NUMBER
+                val = np.finfo(float).eps
             data.append(val)
             rows.append(i)
             cols.append(j)
@@ -440,7 +456,7 @@ def orgmode_table_line(strings_or_n):
     return(out)
 
 def np_or_img_to_array(path,crop_to_patchsize=None):
-    if path[-3:].upper() in  ['JPG','GIF','PNG','EPS']:
+    if path[-3:].upper() in  ['JPG','GIF','PNG','EPS','BMP']:
         ret = skimage.io.imread(path,as_grey=True).astype('float64')/255
     elif path[-3:].upper() in  ['NPY']:
         ret = np.load(path)
@@ -491,6 +507,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     method: the chosen method. The possible choices are:
     	- 2ddict: 2ddict procedure 
     	- ksvd: uses the KSVD method
+	- warmstart: uses 2means-2dict as warm start for KSVD
     transform: whether to transform the data before applying the method:
     	- 2dpca: applies 2DPCA transform (see options: twodpca_l,twodpca_r)
     	- wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
@@ -549,6 +566,11 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
         dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
     elif method == 'ksvd':
         dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
+        dictionary.compute()
+    elif method == 'warmstart':
+        tempdict = hierarchical_dict(data_to_cluster)
+        tempdict.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
+        dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity,warmstart=tempdict)
         dictionary.compute()
     if method == '2ddict':
         dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
@@ -812,7 +834,7 @@ class Oc_Dict(Saveable):
     #    omp.fit(self.matrix,sample)
     #    return(omp._coef)        
 
-    def encode_samples(self,samples,sparsity,center_samples=True):
+    def encode_samples(self,samples,sparsity):
         #if hasattr(self,'_encode'):
         #    self._encode(samples)
         means = []
@@ -835,8 +857,8 @@ class Oc_Dict(Saveable):
             coefs = omp.coef_.transpose()
         return(means,coefs)
 
-    def encode_patches(self,patches,sparsity,center_samples=True):
-        return(self.encode_samples(patches2matrix(patches),sparsity,center_samples))
+    def encode_patches(self,patches,sparsity):
+        return(self.encode_samples(patches2matrix(patches),sparsity))
         
     def reconstruct_samples(self,coefficients,means=None):
         if hasattr(self,'_reconstruct'):
@@ -1382,6 +1404,8 @@ class hierarchical_dict(Oc_Dict):
                     else:
                         lpriority = None
                         rpriority = None
+                    if lpriority == rpriority:
+                        rpriority += np.finfo(float).eps
                     lnode = Node(abs_lsamples,cur,True)
                     rnode = Node(abs_rsamples,cur,False)
                     cur.children = (lnode,rnode)
@@ -1473,7 +1497,7 @@ class hierarchical_dict(Oc_Dict):
 class ksvd_dict(Oc_Dict):
     """Computes dictionary using KSVD method."""
     
-    def __init__(self,patch_list,dictsize,sparsity,maxiter=8):
+    def __init__(self,patch_list,dictsize,sparsity,maxiter=8,warmstart=None):
         Oc_Dict.__init__(self,patch_list)
         self.npatches = len(patch_list)
         self.dictsize = dictsize
@@ -1483,6 +1507,7 @@ class ksvd_dict(Oc_Dict):
         self.octave = octave
         #self.octave.addpath(implementation+'/')
         self.useksvdencoding = True
+        self.warmstart = warmstart
 
 
     def compute(self):
@@ -1520,10 +1545,19 @@ class ksvd_dict(Oc_Dict):
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
         Y = patches2matrix(self.patches)
-        params = {'data': Y.astype('double'),
-                 'Tdata': self.sparsity,
-                 'dictsize': self.dictsize,
-                 'memusage': 'normal'} #'low','normal' or 'high'
+        if self.warmstart is None:
+            params = {'data': Y.astype('double'),
+                      'Tdata': self.sparsity,
+                      'dictsize': self.dictsize,
+                      #'iternum': 10,
+                      'memusage': 'normal'} #'low','normal' or 'high'
+        else:
+            params = {'data': Y.astype('double'),
+                      'Tdata': self.sparsity,
+                      'initdict': self.warmstart.matrix,
+                      'iternum': 7,
+                      'memusage': 'normal'} #'low','normal' or 'high'
+
         #[D,X] = self.octave.ksvd(params)
         print('Computing ksvd...')
         [D,X] = self.octave.ksvd(params)

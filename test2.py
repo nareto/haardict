@@ -5,12 +5,12 @@ import copy
 
 np.random.seed(123)
 
-#save = False
-save = True
+save = False
+#save = True
 
-figures = True
-#figures = False
-testid = 'spectralvskmeans'
+#figures = True
+figures = False
+testid = 'fprint'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
@@ -23,27 +23,37 @@ save_prefix = 'jimg/'+date+'-'+testid
 #learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
 #learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
 learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
+#learnimgs = ['img/peppers256.png']
+#learnimgs = ['img/cameraman256.png']
+#learnimgs = ['img/landscape1-rescaled.jpg']
+#learnimgs = ['img/fingerprint512.png','img/fprint1.png','img/fprint2.png']
+#learnimgs = ['img/fingerprint512.png','img/fprint1.png']
+#learnimgs = ['img/seis0_orig.eps','img/seis2_orig.eps']
+#codeimg = 'img/landscape2-rescaled.jpg'
 #codeimg = 'img/flowers_pool-rescale.npy'
 codeimg = 'img/boat512.png'
-#codeimg = 'img/landscape1-rescaled.jpg'
-#learnimg = 'img/fprint1.png'
+#codeimg = 'img/cameraman256.png'
+#codeimg = 'img/peppers256.png'
+#codeimg = 'img/fprint3.bmp'
 #codeimg = 'img/fprint2.png'
+#codeimg = 'img/seis3.eps'
 #codeimg = 'img/rocks_lake-rescaled.npy'
 #codeimg = 'img/barbara.jpg'
 #learnimg = 'img/flowers_pool-small.npy'
 #codeimg = 'img/flowers_pool-small.npy'
-patch_size = (16,16)
+#patch_size = (16,16)
 #patch_size = (24,24)
 #patch_size = (32,32)
-#patch_size = (8,8)
-#npatches = None
-npatches = 300
+patch_size = (8,8)
+npatches = None
+#npatches = 300
 sparsity = 5
-meth = '2ddict'
-#meth = 'ksvd'
+#meth = '2ddict'
+meth = 'ksvd'
+#meth = 'warmstart'
 #test_meths = ['ksvd']
-#clust = 'twomeans'
-clust = 'spectral'
+clust = 'twomeans'
+#clust = 'spectral'
 #clust = 'fh'
 #clust = 'random'
 
@@ -63,12 +73,13 @@ cluster_epsilon = None
 #cluster_epsilon = 1e-4 #-> 71 for spectral haarpsi on 8x8, 47 for emd
 #cluster_epsilon = 2e-5#-> for emd gives 44
 #cluster_epsilon = 1500
+b = 64 #bits used for encoding one float
 
 #SPECTRAL CLUSTERING
 
-spectral_similarity = 'haarpsi'
+#spectral_similarity = 'haarpsi'
 #spectral_similarity = 'emd'
-#spectral_similarity = 'frobenius'
+spectral_similarity = 'frobenius'
 affinity_matrix_threshold = 0.5
 simmeasure_beta = 0.5 #only for Frobenius and EMD similarity measures
 
@@ -76,12 +87,12 @@ simmeasure_beta = 0.5 #only for Frobenius and EMD similarity measures
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet'
 #learn_transf = 'wavelet_packet'
-learn_transf = '2dpca'
-#learn_transf = None
+#learn_transf = '2dpca'
+learn_transf = None
 #wav = 'db2'
 wav = 'haar'
 wavlev = 1
-tdpcal,tdpcar = 8,8
+tdpcal,tdpcar = 4,4
 mc = None
 compute_mutual_coherence = False
 
@@ -114,7 +125,8 @@ def main():
     print_test_parameters(dictionary,learn_time,rec_time)
     #print('Reconstructed in %f seconds' % rec_time)
     #print('Total time: %f' % learn_time + rec_time)
-    print_rec_results(dictionary,rec,img,coefs,noisy_img=noisy_img)
+    storage = storage_cost(dictionary,coefs, sparsity, bits = b)
+    print_rec_results(dictionary,rec,img,coefs,storage,learn_time,noisy_img=noisy_img)
     if meth == '2ddict':
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')
@@ -122,7 +134,8 @@ def main():
         rec2,coefs2,time,noisy_img2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,noisevar=noise)
         #print('Reconstructed image in %f seconds' % toc(0))
         #rec = rescale(rec,True)
-        print_rec_results(dictionary2,img,rec2,coefs2,noisy_img=None,firstorgline=False)
+        storage2 = storage_cost(dictionary2,coefs2, sparsity, bits = 64)
+        print_rec_results(dictionary2,img,rec2,coefs2,storage2,learn_time,noisy_img=None,firstorgline=False)
     if meth == '2ddict':
         tag = dictionary.dicttype + ':'
         tag2 = dictionary2.dicttype + ':'
@@ -162,7 +175,7 @@ def print_test_parameters(dictionary,learn_time,rec_time):
     print(desc_string)
 
     
-def print_rec_results(dictionary,img,rec,coefs,noisy_img=None,firstorgline=True):
+def print_rec_results(dictionary,img,rec,coefs,storage_cost,learn_time,noisy_img=None,firstorgline=True):
     if noisy_img is not None:
         n_hpi = haar_psi(255*img,255*noisy_img)[0]
         n_psnrval = psnr(img,noisy_img)
@@ -172,6 +185,7 @@ def print_rec_results(dictionary,img,rec,coefs,noisy_img=None,firstorgline=True)
     rec_hpi = haar_psi(255*img,255*rec)[0]
     rec_psnrval = psnr(img,rec)
     ent = entropy(atoms_prob(coefs))
+    qindex = b*img.size*rec_hpi/storage_cost
     if compute_mutual_coherence:
         dictionary.mutual_coherence(False)
         mc = dictionary.max_cor
@@ -192,9 +206,9 @@ def print_rec_results(dictionary,img,rec,coefs,noisy_img=None,firstorgline=True)
         meth_string = meth
     if firstorgline:
         print('\n')
-        print(orgmode_table_line(['Method','K','Mutual Coherence', 'Entropy','Noisy PSNR','Noisy HaarPSI','Reconstructed PSNR','Reconstructed HaarPSI']))
+        print(orgmode_table_line(['Method','K', 'Patch Size', 'Learn Time', 'Noisy PSNR','Noisy HaarPSI','Reconstructed PSNR','Reconstructed HaarPSI','Storage Cost', 'Q index']))
         
-    print(orgmode_table_line([meth_string,dictionary.dictsize,mcstring,ent,n_psnrval,n_hpi,rec_psnrval,rec_hpi]))
+    print(orgmode_table_line([meth_string,dictionary.dictsize,dictionary.patch_size,learn_time,n_psnrval,n_hpi,rec_psnrval,rec_hpi,storage_cost,qindex]))
 
 
 def print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=None,simhist=False):
