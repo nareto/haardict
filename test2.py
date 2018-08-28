@@ -1,4 +1,4 @@
-from twoDdict import *
+from haardict import *
 import numpy as np
 import matplotlib.pyplot as plt
 import copy
