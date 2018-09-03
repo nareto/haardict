@@ -1,5 +1,5 @@
 # Introduction
-This repository contains python code used for testing tree-based dictionary learning methods
+This repository contains python code used for testing the Haar dictionary learning method proposed in my PhD thesis. 
 
 # Dependencies
 The following python packages are used:
@@ -10,12 +10,8 @@ The following python packages are used:
 	skimage
 
 
-# External Files
-To compute ksvd a working installation of `octave` and `oct2py` is needed, as well as the KSVD-Box [1] package which must be compiled. To compute HaarPSI values of the figures the `haarpsi.py` file is needed [2].
-
-
-# Optional Dependencies
-To use spectral clustering with the EMD (Earth Mover's Distance) the python `pyemd` package is needed.
+# External Files and Optional Dependencies
+To compute the KSVD a working installation of `octave` and `oct2py` are needed, as well as the KSVD-Box [1] package which must be compiled. To compute the HaarPSI values of the figures the `haarpsi.py` file is needed [2]. To use spectral clustering with the EMD (Earth Mover's Distance) the python `pyemd` package is needed.
 
 # Example Usage
 
