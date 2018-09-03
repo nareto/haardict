@@ -1,3 +1,19 @@
+#    Copyright 2018 Renato Budinich
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
 from haardict import *
 import numpy as np
 import matplotlib.pyplot as plt
@@ -112,28 +128,20 @@ show_sc_egvs = False
 def main():
     img = np_or_img_to_array(codeimg,patch_size)
 
+    ### LEARN DICTIONARY ###
     dictionary,learn_time = learn_dict(learnimgs,npatches,patch_size,noisevar=noise,method=meth,dictsize=dictsize,clustering=clust,transform=learn_transf,cluster_epsilon=cluster_epsilon,spectral_similarity=spectral_similarity,simmeasure_beta=simmeasure_beta,affinity_matrix_threshold=affinity_matrix_threshold,ksvdsparsity=ksvd_sparsity,twodpca_l=tdpcal,twodpca_r=tdpcar,dict_with_transformed_data=dwtd,wavelet=wav,wav_lev=wavlev,dicttype='haar')
 
-    #print('Learned dictionary in %f seconds' % learn_time)
-    #if meth == 'ksvd'  and (npatches is not None or len(learnimgs) > 1 or codeimg != learnimgs[0]) :
     dictionary.useksvdencoding = False
 
     ### RECONSTRUCT ###
     rec,coefs,rec_time,noisy_img = reconstruct(dictionary,codeimg,patch_size,sparsity,noisevar=noise)
-    #print('Reconstructed image in %f seconds' % toc(0))
-    #rec = rescale(rec,True)
     print_test_parameters(dictionary,learn_time,rec_time)
-    #print('Reconstructed in %f seconds' % rec_time)
-    #print('Total time: %f' % learn_time + rec_time)
     storage = storage_cost(dictionary,coefs, sparsity, bits = b)
     print_rec_results(dictionary,rec,img,coefs,storage,learn_time,noisy_img=noisy_img)
     if meth == '2ddict':
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')
-        #tic()
         rec2,coefs2,time,noisy_img2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,noisevar=noise)
-        #print('Reconstructed image in %f seconds' % toc(0))
-        #rec = rescale(rec,True)
         storage2 = storage_cost(dictionary2,coefs2, sparsity, bits = 64)
         print_rec_results(dictionary2,img,rec2,coefs2,storage2,learn_time,noisy_img=None,firstorgline=False)
     if meth == '2ddict':
@@ -152,8 +160,6 @@ def print_test_parameters(dictionary,learn_time,rec_time):
     desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
     desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nCoding sparsity: %d\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
                    (learnimgs,codeimg,patch_size,len(dictionary.patches),meth,sparsity,learn_time,rec_time,learn_time+rec_time)
-    #if mc is not None:
-    #    desc_string += '\nMutual coherence: %f (from atoms %d and %d)' % (mc,argmc[0],argmc[1])
     if learn_transf is not None:
         desc_string += '\nLearning transform: %s' % (learn_transf)
         if learn_transf in ['wavelet','wavelet_packet']:
@@ -169,9 +175,6 @@ def print_test_parameters(dictionary,learn_time,rec_time):
             desc_string += '\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (clust,dictionary.tree_depth,dictionary.tree_sparsity)
         if clust == 'spectral':
             desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
-    #if rec_transf is not None:
-    #    desc_string += '\nReconstruction transform: %s' % (rec_transf)
-
     print(desc_string)
 
     
@@ -193,10 +196,6 @@ def print_rec_results(dictionary,img,rec,coefs,storage_cost,learn_time,noisy_img
         mcstring = str(mc)+' (atoms %d and %d)'%(argmc[0],argmc[1])
     else:
         mcstring = '-'
-    #reconstructed[dict_string] = 
-    #twonorm = np.linalg.norm(img-rec,ord=2)
-    #fronorm = np.linalg.norm(img-rec,ord='fro')
-
     if meth == '2ddict':
         if dictionary.visit == 'fifo':
             meth_string = '-'.join((meth,clust,dictionary.dicttype,('%.2e' % cluster_epsilon)))
@@ -291,5 +290,10 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=None,simhist=F
             plt.close()
             print(orgmode_str)
 
+def orgmode_table_line(strings_or_n):
+    out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
+    return(out)
+
+            
 if __name__ == '__main__':
     main()
