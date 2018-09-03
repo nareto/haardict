@@ -510,7 +510,7 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     else:
         plt.savefig(savefile)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',dictsize=None,clustering='2means',cluster_epsilon=2,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -521,6 +521,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     	- 2ddict: 2ddict procedure 
     	- ksvd: uses the KSVD method
 	- warmstart: uses 2means-2dict as warm start for KSVD
+    dictsize: cardinality of dictionary
     transform: whether to transform the data before applying the method:
     	- 2dpca: applies 2DPCA transform (see options: twodpca_l,twodpca_r)
     	- wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
@@ -596,24 +597,24 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     #ipdb.set_trace()
     return(dictionary,time)
 
-def reconstruct(oc_dict,imgpath,psize,sparsity=5,noisevar=0):
+def reconstruct(oc_dict,imgpath,patch_size,sparsity=5,noisevar=0):
     clip = False
     spars= sparsity
-    cleanimg = np_or_img_to_array(imgpath,psize)
+    cleanimg = np_or_img_to_array(imgpath,patch_size)
     if noisevar == 0:
         img = cleanimg
         nimg = None
     else:
         nimg = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
         img = nimg
-    patches = extract_patches(img,psize)
+    patches = extract_patches(img,patch_size)
 
     tic()
     outpatches = []
     means,coefs = oc_dict.encode_patches(patches,spars)
     rec_patches = oc_dict.reconstruct_patches(coefs,means)
     
-    #reconstructed_patches = [p.reshape(psize) for p in rec_matrix.transpose()]
+    #reconstructed_patches = [p.reshape(patch_size) for p in rec_matrix.transpose()]
     reconstructed = assemble_patches(rec_patches,img.shape)
     time = toc(False)
     if clip:
@@ -769,7 +770,7 @@ class Cluster(Saveable):
         
 class Oc_Dict(Saveable):
     """Dictionary"""
-    
+
     def __init__(self,patch_list):
         self.patches = np.array(patch_list)
         #self.matrix = matrix
@@ -1519,7 +1520,7 @@ class ksvd_dict(Oc_Dict):
         from oct2py import octave
         self.octave = octave
         #self.octave.addpath(implementation+'/')
-        self.useksvdencoding = True
+        self.useksvdencoding = False
         self.warmstart = warmstart
 
 
