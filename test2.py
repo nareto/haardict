@@ -70,7 +70,6 @@ meth = 'ksvd'
 #test_meths = ['ksvd']
 clust = 'twomeans'
 #clust = 'spectral'
-#clust = 'fh'
 #clust = 'random'
 
 noise = 0

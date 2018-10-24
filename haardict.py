@@ -418,42 +418,6 @@ def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
     #print(len(affinity_matrix.data)/(affinity_matrix.shap
     return(aff_mat,data,np.array(rows),np.array(cols))
 
-def complete_affinity_matrix(affmat,samples,similarity_measure,symmetric=True):
-    """Fills in affmat so that the corresponding graph has one connected component"""
-
-    nsamples = len(samples)
-    data = []
-    rows = []
-    cols = []
-    abovethresh = queue.PriorityQueue()
-    uf = fh_union_find(nsamples)
-    for i,j in itertools.combinations(range(nsamples),2):
-        val = affmat[i,j]
-        if val != 0:
-            uf.union(i,j)
-        else:
-            val = similarity_measure(samples[i], samples[j])
-            abovethresh.put((1-val,(i,j)))
-    while not abovethresh.empty():
-        d,coord = abovethresh.get()
-        i,j = coord
-        if not uf.union(i,j):
-            val = 1-d
-            if val == 0:
-                val = np.finfo(float).eps
-            data.append(val)
-            rows.append(i)
-            cols.append(j)
-    #theoretically this next if should never trigger
-    data = np.array(data)
-
-    new_affmat = csr_matrix((data,(rows,cols)),shape=(nsamples,nsamples))
-    if symmetric:
-        new_affmat = new_affmat + new_affmat.transpose() #make it symmetrical
-    #print(len(affinity_matrix.data)/(affinity_matrix.shap
-    new_affmat += affmat
-    return(new_affmat,data,np.array(rows),np.array(cols))    
-
 
 def covariance_matrix(patches):
     """Computes generalized covariance matrix of arrays in patches"""
@@ -527,9 +491,8 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     	- wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
     	- wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
     clustering: the clustering used (only for 2ddict method):
-    	- 2means: 2-means on the vectorized samples
+    	- twomeans: 2-means on the vectorized samples
     	- spectral: spectral clustering (slow)
-	- fh: Felzenszwalb-Huttenlocher clustering (slower)
 	- random: random clustering
     cluster_epsilon: threshold for clustering (lower = finer clustering)
     spectral_similarity: similarity measure used for spectral clustering. Can be 'frobenius','haarpsi' or 'emd' (earth's mover distance)
@@ -678,21 +641,14 @@ class Cluster(Saveable):
         self.nsamples = len(samples)
         self.patch_size = self.samples[0].shape
 
-    def _compute_affinity_matrix(self,one_connected_component=False,**args):
+    def _compute_affinity_matrix(self,**args):
         if self.similarity_measure == 'haarpsi':
             self.simmeasure = simmeasure_haarpsi()
         elif self.similarity_measure == 'frobenius':
             self.simmeasure = simmeasure_frobenius(beta=self.simmeasure_beta,samples=self.samples)
         elif self.similarity_measure == 'emd':
             self.simmeasure  = simmeasure_emd(self.patch_size,beta=self.simmeasure_beta,samples=self.samples)
-        if one_connected_component:
-            first_affmat,first_data,first_rows,first_cols = affinity_matrix(self.samples,self.simmeasure,self.affinity_matrix_threshold,args)
-            self.affinity_matrix,second_data,second_rows,second_cols = complete_affinity_matrix(first_affmat,self.samples,self.simmeasure,args)
-            self.affmat_data = np.hstack((first_data,second_data))
-            self.affmat_rows = np.hstack((first_rows,second_rows))
-            self.affmat_cols = np.hstack((first_cols,second_cols))
-        else:
-            self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,self.simmeasure,self.affinity_matrix_threshold,args)
+        self.affinity_matrix,self.affmat_data,self.affmat_rows,self.affmat_cols = affinity_matrix(self.samples,self.simmeasure,self.affinity_matrix_threshold,args)
             #print(len(self.affinity_matrix.data)/(self.affinity_matrix.shape[0]*self.affinity_matrix.shape[1]))
         self.affinity_matrix_nonzero_perc = len(self.affinity_matrix.data)/self.nsamples**2
 
@@ -1172,183 +1128,6 @@ class spectral_clustering(Cluster):
         else:
             plt.show()
 
-class fh_union_find():
-    """Implementation originally due to Nils Doerrer of union find structure as used by felzenszwalb_huttenlocher_clustering class"""
-
-    def __init__(self, n, k=1):
-        """
-        Constructor for Segmentation class. Creates a union-find structure
-        where all components hold exactly one element. Also initializes
-        cardinality and Int lists
-        Args:
-        n:	number of components in the data structure
-        k:	parameter for the threshold function tau = k / |C|
-        """
-        self.parent = list(range(n))
-        self.Int = list(np.zeros(n))
-        self.cardinality = list(np.ones(n))
-        self.k = k
-        self.n = n
-        self.nclusters = n
-
-    def find(self, i):
-        """
-        Recursively walks up the tree containing i and gives root node
-        Args:
-        i:	node to which the root should be found
-        Returns:
-        root node number (find(root) = root itself)
-        """
-        if self.parent[i] != i:
-            self.parent[i] = self.find(self.parent[i])
-        return self.parent[i]
-
-    def union(self, i, j, weight=0):
-        """
-        Unites two components in the union-find structure. Additionally it
-        adjusts the cardinality and Int values such that they are correct for
-        the root of each component after merging the components.
-        Args:
-        i:		node in first component to merge (not neccessarily root)
-        j:		node in second component to merge (not neccessarily root)
-        weight:	weight of the edge connecting them, needed to set Int value
-        """
-        i = self.find(i)
-        j = self.find(j)
-        if i != j:
-            self.parent[i] = j
-            self.cardinality[j] += self.cardinality[i]
-            self.Int[j] = min(self.Int[i], min(self.Int[j], weight))
-            self.nclusters -= 1
-            return(0)
-        else:
-            return(1)
-
-    def issame(self, i, j):
-        """
-        Checks whether two nodes are in the same component, i.e. have same root.
-        Args:
-        i:	first node
-        j:	second node
-        Returns:
-        true iff i and j are in the same component
-        """
-        return self.find(i) == self.find(j)
-
-    def MInt(self, i, j):
-        """
-        Returns the MInt value between two components (reasonable iff disjoint)
-        MInt = max( Int(C_i) + tau(C_i), Int(C_j) + tau(C_j) )
-        Depends on tau function below.
-        Args:
-        i:	node in the first component
-        j:	node in the second component
-        Returns:
-        MInt(C_i, C_j) value
-        """
-        i = self.find(i)
-        j = self.find(j)
-        return max(self.Int[i] - self.tau(i), self.Int[j] - self.tau(j)) # I want MInt to be smaller for low-cardinality sets
-
-    def tau(self, i):
-        """
-        Represents the threshold function which depends on the component size.
-        Here it is set to k / |C| for some constant k.
-        Args:
-        i: root of a component (to get its cardinality)
-        Returns:
-        threshold-function value
-        """
-        return self.k / self.cardinality[i]
-        
-            
-class felzenszwalb_huttenlocher_clustering(Cluster):
-    """Clusters data using adapted Felzenszwalb-Huttenlocher segmentation method"""
-
-    def __init__(self,samples,similarity_measure,simmeasure_beta=0.06,affinity_matrix_threshold=0.5,k=10):
-        """	samples: patches to cluster
-    		similarity_measure: can be 'frobenius', 'haarpsi' or 'emd' (earth's mover distance)
-        	affinity_matrix_threshold: threshold in (0,1) for affinity_matrix similarities."""
-        Cluster.__init__(self,samples)
-        self.similarity_measure = similarity_measure
-        self.simmeasure_beta = simmeasure_beta
-        self.affinity_matrix_threshold = affinity_matrix_threshold
-
-        self.cluster_matrix = patches2matrix(self.samples).transpose()        
-        self._compute_affinity_matrix(one_connected_component=True)
-        #self._compute_mst()
-        self.k = k
-
-
-    def cluster(self,patch_indexes):
-        return(self._cluster(patch_indexes))
-        
-    def _cluster(self,patch_indexes):
-        """Returns a hierarchical_dict using the inherent tree structure in the Felzenszwalb-Huttenlocher algorithm"""
-
-        npatches = len(patch_indexes)
-        affmat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
-        new_affmat,data,rows,cols = complete_affinity_matrix(affmat,self.samples[patch_indexes],self.simmeasure)
-        absrows,abscols = [],[]
-        #rows and cols are given for the submatrix affmat: we want the absolute indexes for self.affinity_matrix
-        if len(rows) > 0:
-            for idx, p in enumerate(patch_indexes):
-                absrows.append(p + rows[idx])
-                abscols.append(p + cols[idx])
-        self.affinity_matrix[patch_indexes,:][:,patch_indexes] = new_affmat
-        self.affmat_data = np.hstack((self.affmat_data,data))
-        self.affmat_rows = np.hstack((self.affmat_rows,absrows))
-        self.affmat_cols = np.hstack((self.affmat_cols,abscols))
-        affmat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
-        enu_pi = {}
-        for i,pi in enumerate(patch_indexes):
-            enu_pi[pi]  = i
-        edges = []
-        for idx,e in enumerate(zip(self.affmat_rows,self.affmat_cols)):
-            i,j = e
-            if i in patch_indexes and j in patch_indexes:
-                edges.append((self.affinity_matrix[i,j],e))
-        edges = sorted(edges,key=lambda x: x[0])
-        edges.reverse()
-        uf = fh_union_find(npatches, k=self.k)
-        for ew,e in edges:
-            v1,v2 = e
-            v1 = v1.astype('int')
-            v2 = v2.astype('int')
-            uf.union(enu_pi[v1],enu_pi[v2],weight=ew)
-            if uf.nclusters == 2:
-                break
-        labels = np.array([uf.find(x) for x in range(npatches)])
-        vlabels = np.unique(labels)
-        nlabels = vlabels.size
-        if nlabels != 2:
-            print(vlabels)
-            raise Exception("There should be exactly 2 clusters")
-        lsamples = (labels == vlabels[0]).nonzero()[0]
-        rsamples = (labels == vlabels[1]).nonzero()[0]
-        return(lsamples,rsamples,None)
-                           
-    def _cluster_tree(self,patch_indexes):
-        #self.affmat_data,self.affmat_rows,self.affmat_cols are avaiable
-        aff_mat = self.affinity_matrix[patch_indexes,:][:,patch_indexes]
-        #argsort = self.affmat_data.argsort()[::-1]
-        #edge_weights = self.affmat_data[argsort]
-        argsort = aff_mat.data.argsort()[::-1]
-        edge_weights = aff_mat.data[argsort]
-        vertices = list(zip(np.array(self.affmat_rows)[argsort],(np.array(self.affmat_cols)[argsort])))
-        self.uf = fh_union_find(len(self.samples), k=self.fh_k)
-        nclusters = len(self.samples)
-        for ew,v in zip(edge_weights,vertices):
-            #print(e,v)
-            v1,v2 = v
-            #if ew >= self.uf.MInt(v1,v2):
-            #    self.uf.union(v1,v2,weight=ew)
-            self.uf.union(v1,v2,weight=ew)
-            nclusters -= 1
-            if nclusters == 2:
-                break
-        labels = np.array([self.uf.find(x) for x in range()])
-
          
         
 class hierarchical_dict(Oc_Dict):
@@ -1358,7 +1137,7 @@ class hierarchical_dict(Oc_Dict):
         self.dicttype = 'haar'
 
     def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5,\
-                spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5,fh_k=1):
+                spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5):
         if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
         if clustering_method == 'twomeans':
@@ -1366,13 +1145,10 @@ class hierarchical_dict(Oc_Dict):
         elif clustering_method == 'spectral':
             self.clustering = spectral_clustering(self.patches,similarity_measure=spectral_sim_measure,\
                                                   simmeasure_beta=simbeta,affinity_matrix_threshold=affthreshold)
-        elif clustering_method == 'fh':
-            self.clustering = felzenszwalb_huttenlocher_clustering(self.patches,similarity_measure=spectral_sim_measure,\
-                                                                   simmeasure_beta=simbeta,affinity_matrix_threshold=affthreshold,k=fh_k)
         elif clustering_method == 'random':
             self.clustering = monkey_clustering(self.patches)
         else:
-            raise Exception('clustering_method must be either \'twomeans\',\'spectral\' or \'fh\'')
+            raise Exception('clustering_method must be either \'twomeans\',\'spectral\' or \'random\'')
         self.root_node = Node(tuple(np.arange(self.npatches)),None)
         self.clust_epsilon = epsilon
         if nbranchings is not None:
