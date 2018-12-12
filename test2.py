@@ -24,9 +24,9 @@ np.random.seed(123)
 save = False
 #save = True
 
-#figures = True
-figures = False
-testid = 'fprint'
+figures = True
+#figures = False
+testid = 'kmax'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
@@ -35,10 +35,10 @@ base_save_dir = '/Users/renato/nextcloud/phd/'
 save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
-#learnimgs = ['img/flowers_pool-rescale.npy']
+learnimgs = ['img/flowers_pool-rescale.npy']
 #learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
 #learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
-learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
+#learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
 #learnimgs = ['img/peppers256.png']
 #learnimgs = ['img/cameraman256.png']
 #learnimgs = ['img/landscape1-rescaled.jpg']
@@ -46,8 +46,8 @@ learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/
 #learnimgs = ['img/fingerprint512.png','img/fprint1.png']
 #learnimgs = ['img/seis0_orig.eps','img/seis2_orig.eps']
 #codeimg = 'img/landscape2-rescaled.jpg'
-#codeimg = 'img/flowers_pool-rescale.npy'
-codeimg = 'img/boat512.png'
+codeimg = 'img/flowers_pool-rescale.npy'
+#codeimg = 'img/boat512.png'
 #codeimg = 'img/cameraman256.png'
 #codeimg = 'img/peppers256.png'
 #codeimg = 'img/fprint3.bmp'
@@ -62,19 +62,20 @@ codeimg = 'img/boat512.png'
 #patch_size = (32,32)
 patch_size = (8,8)
 npatches = None
-#npatches = 300
+#npatches = 500
 sparsity = 5
-#meth = '2ddict'
-meth = 'ksvd'
+meth = '2ddict'
+#meth = 'ksvd'
 #meth = 'warmstart'
 #test_meths = ['ksvd']
-clust = 'twomeans'
+#clust = 'twomeans'
+clust = 'twomaxoids'
 #clust = 'spectral'
 #clust = 'random'
 
 noise = 0
 
-dictsize = 85
+dictsize = 100
 #dictsize = None
 cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
@@ -215,6 +216,8 @@ def print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=None,simhist=F
     if meth == '2ddict':
         if clust == 'twomeans':
             savename += '-2means'
+        elif clust == 'twomaxoids':
+            savename += '-2maxoids'
         elif clust == 'spectral':
             savename += '-spec_%s' % spectral_similarity
 

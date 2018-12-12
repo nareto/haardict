@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from kmaxoids import KMaxoids
+from kmaxoids import KMaxoids,KMaxoids_naive
 from sklearn.datasets.samples_generator import make_blobs
 from sklearn.cluster import KMeans
 
@@ -41,24 +41,25 @@ fig,axes = plt.subplots(1,2)
 colors = ['red','green','blue']
 
 #KMeans
+tic()
 kmeans = KMeans(n_clusters=3).fit(Y)
+print('kmeans computed in %f seconds' % (toc(False)))
 for p,coord in enumerate(Y):
     axes[0].scatter(coord[0],coord[1],color=colors[kmeans.labels_[p]])
 for p,c in enumerate(colors):
     cent = kmeans.cluster_centers_[p]
     axes[0].plot(cent[0],cent[1],'ok')
 
-
 #KMaxoids
+tic()
 kmaxoids = KMaxoids(Y.transpose(),3)
-maxoids, clusters = kmaxoids.run()
-
-for idx,c in enumerate(clusters):
-    col = colors[idx]
-    for data_point_idx in c:
-        p = Y[data_point_idx,:]
-        axes[1].scatter(p[0],p[1],color=col)
-    repr = maxoids[:,idx]
-    axes[1].plot(repr[0],repr[1],'ok')
+maxoids, labels = kmaxoids.run()
+print('kmaxoids computed in %f seconds' % (toc(False)))
+for p,coord in enumerate(Y):
+    axes[1].scatter(coord[0],coord[1],color=colors[labels[p]])
+for p,c in enumerate(colors):
+    cent = maxoids[:,p]
+    axes[1].plot(cent[0],cent[1],'ok')
+    
 #plt.scatter(X[:,0],X[:,1])
 plt.show()

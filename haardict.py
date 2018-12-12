@@ -1,3 +1,4 @@
+
 #    Copyright 2018 Renato Budinich
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -31,6 +32,7 @@ from scipy.spatial.distance import pdist
 import pyemd
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
+from kmaxoids import KMaxoids
 from sklearn.cluster import SpectralClustering
 from sklearn.cluster import ward_tree
 from sklearn.neighbors import kneighbors_graph
@@ -492,6 +494,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     	- wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
     clustering: the clustering used (only for 2ddict method):
     	- twomeans: 2-means on the vectorized samples
+        - twomaxoids: 2-maxoids on the vectorized samples
     	- spectral: spectral clustering (slow)
 	- random: random clustering
     cluster_epsilon: threshold for clustering (lower = finer clustering)
@@ -597,7 +600,7 @@ class Saveable():
         self.__dict__.update(tmpdict)
     
 class Node():
-    def __init__(self,samples_idx,parent,isleftchild=True):
+    def __init__(self,samples_idx,parent,isleftchild=True,representative_patch=None):
         self.parent = parent
         if parent is None:
             self.depth = 0
@@ -612,6 +615,7 @@ class Node():
         #self.samples_idx = None
         self.samples_idx = np.array(samples_idx) #indexes of d.samples_idx where d is an ocdict
         self.nsamples= len(self.samples_idx)
+        self.representative_patch = representative_patch
         #if samples_idx is not None:
         #    self.samples_idx = tuple(samples_idx) #indexes of d.samples_idx where d is an ocdict
         #    self.nsamples= len(self.samples_idx)
@@ -1005,6 +1009,15 @@ class monkey_clustering(Cluster):
         ran = np.random.randint(0,2,len(patch_indexes))
         lsamples = (ran == 0).nonzero()[0]
         rsamples = (ran != 0).nonzero()[0]
+        lcentroid = None
+        rcentroid = None
+        curpatches = self.samples[patch_indexes]
+        if len(lsamples) > 0 and len(rsamples) > 0:
+            lcentroid = sum([curpatches[i] for i in lsamples[1:]],curpatches[lsamples[0]])
+            rcentroid = sum([curpatches[i] for i in rsamples[1:]],curpatches[rsamples[0]])
+            lcentroid /= len(lsamples)
+            rcentroid /= len(rsamples)
+        
         return(lsamples,rsamples,None)
     
 class twomeans_clustering(Cluster):
@@ -1016,7 +1029,7 @@ class twomeans_clustering(Cluster):
 
     def cluster(self, patch_indexes):
         """Returns (idx1,idx2,wcss) where idx1 and idx2 are the set of indexes partitioning the data array and wcss is the achieved value of the WCSS function"""
-        
+
         km_instance = KMeans(n_clusters=2,tol=0.1)
         km = km_instance.fit(self.cluster_matrix[patch_indexes,:])
         #self.wcss.append(km.inertia_)
@@ -1024,9 +1037,46 @@ class twomeans_clustering(Cluster):
         rsamples = (km.labels_ != 0).nonzero()[0]
         scaledwcss = km.inertia_/(len(patch_indexes*self.data_dim))
 
-        return(lsamples,rsamples,scaledwcss)
+        lcentroid = None
+        rcentroid = None
+        curpatches = self.samples[patch_indexes]
+        if len(lsamples) > 0 and len(rsamples) > 0:
+            lcentroid = sum([curpatches[i] for i in lsamples[1:]],curpatches[lsamples[0]])
+            rcentroid = sum([curpatches[i] for i in rsamples[1:]],curpatches[rsamples[0]])
+            lcentroid /= len(lsamples)
+            rcentroid /= len(rsamples)
+        return(lsamples,rsamples,lcentroid,rcentroid,scaledwcss)
         
+class twomaxoids_clustering(Cluster):
+    """Clusters data using recursive 2-maxoids"""
+
+    def __init__(self,patches):
+        Cluster.__init__(self,patches)
+        self.cluster_matrix = patches2matrix(self.samples)
+
+    def cluster(self, patch_indexes):
+        """Returns (idx1,idx2,wcss) where idx1 and idx2 are the set of indexes partitioning the data array and wcss is the achieved value of the WCSS function"""
         
+        kmax = KMaxoids(self.cluster_matrix[:,patch_indexes],K=2)
+        maxoids,labels = kmax.run()
+        #lsamples = []
+        #for i in clusters[0]:
+        #    lsamples.append(i)
+        #rsamples = []
+        #for i in clusters[1]:
+        #    rsamples.append(i)
+        #lsamples = np.array(lsamples)
+        #rsamples = np.array(rsamples)
+        lsamples = (labels == 0).nonzero()[0]
+        rsamples = (labels != 0).nonzero()[0]
+        scaled_val = kmax.val/(len(patch_indexes*self.data_dim))
+        pshape = self.samples[0].shape
+        lmax = maxoids[:,0].reshape(pshape)
+        rmax = maxoids[:,1].reshape(pshape)
+        return(lsamples,rsamples,lmax,rmax,scaled_val)
+        
+
+    
 class spectral_clustering(Cluster):
     """Clusters data using recursive spectral clustering"""
         
@@ -1076,7 +1126,16 @@ class spectral_clustering(Cluster):
         rsamples = (sc.labels_ != 0).nonzero()[0]
         ncut = self._Ncut(aff_mat,sc.labels_)
 
-        return(lsamples,rsamples,ncut,None)
+        lcentroid = None
+        rcentroid = None
+        curpatches = self.samples[patch_indexes]
+        if len(lsamples) > 0 and len(rsamples) > 0:
+            lcentroid = sum([curpatches[i] for i in lsamples[1:]],curpatches[lsamples[0]])
+            rcentroid = sum([curpatches[i] for i in rsamples[1:]],curpatches[rsamples[0]])
+            lcentroid /= len(lsamples)
+            rcentroid /= len(rsamples)
+
+        return(lsamples,rsamples,lcentroid,rcentroid,ncut,None)
         
 
     def _cluster_explicit(self,patch_indexes):
@@ -1106,7 +1165,16 @@ class spectral_clustering(Cluster):
         #except ZeroDivisionError:
         #    continue
 
-        return(lsamples,rsamples,ncutval,vec)
+        lcentroid = None
+        rcentroid = None
+        curpatches = self.samples[patch_indexes]
+        if len(lsamples) > 0 and len(rsamples) > 0:
+            lcentroid = sum([curpatches[i] for i in lsamples[1:]],curpatches[lsamples[0]])
+            rcentroid = sum([curpatches[i] for i in rsamples[1:]],curpatches[rsamples[0]])
+            lcentroid /= len(lsamples)
+            rcentroid /= len(rsamples)
+
+        return(lsamples,rsamples,lcentroid,rcentroid,ncutval,vec)
 
     def plotegvecs(self,savefile=None):
         #self.egvecs.append((cur.depth,vec,isinleftcluster))
@@ -1142,6 +1210,8 @@ class hierarchical_dict(Oc_Dict):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
         if clustering_method == 'twomeans':
             self.clustering = twomeans_clustering(self.patches)
+        elif clustering_method == 'twomaxoids':
+            self.clustering = twomaxoids_clustering(self.patches)
         elif clustering_method == 'spectral':
             self.clustering = spectral_clustering(self.patches,similarity_measure=spectral_sim_measure,\
                                                   simmeasure_beta=simbeta,affinity_matrix_threshold=affthreshold)
@@ -1172,16 +1242,18 @@ class hierarchical_dict(Oc_Dict):
         dsize = 1
         #self.wcss = []
         while not tovisit.empty():
-            father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur) 
+            father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur)
             if cur.nsamples > minsamples and (self.visit != 'priority' or dsize < nbranchings):
                 if clustering_method == 'spectral':
-                    curlsamples, currsamples, clust_ret_val,egvec = self.clustering.cluster(cur.samples_idx)
+                    curlsamples, currsamples, lrepr, rrepr, clust_ret_val,egvec = self.clustering.cluster(cur.samples_idx)
                 else:
-                    curlsamples, currsamples, clust_ret_val = self.clustering.cluster(cur.samples_idx)
-                abs_lsamples = cur.samples_idx[curlsamples]
-                abs_rsamples = cur.samples_idx[currsamples]
-                minsize = min(len(abs_lsamples),len(abs_rsamples))
+                    curlsamples, currsamples, lrepr, rrepr, clust_ret_val = self.clustering.cluster(cur.samples_idx)
+                #has_sons = True if curlsamples is not None and currsamples is not None else False
+                #if has_sons and (self.visit == 'priority' or clust_ret_val > self.clust_epsilon): #decide whether or not to branch
+                minsize = min(len(curlsamples),len(currsamples))
                 if minsize > 0 and (self.visit == 'priority' or clust_ret_val > self.clust_epsilon): #decide whether or not to branch
+                    abs_lsamples = cur.samples_idx[curlsamples]
+                    abs_rsamples = cur.samples_idx[currsamples]
                     if self.visit == 'priority':
                         #lwcss = len(lsamples_idx)*np.var([self.samples[k] for k in lsamples_idx])
                         lvar = np.var(self.patches[abs_lsamples])
@@ -1196,8 +1268,8 @@ class hierarchical_dict(Oc_Dict):
                         rpriority = None
                     if lpriority == rpriority:
                         rpriority += np.finfo(float).eps
-                    lnode = Node(abs_lsamples,cur,True)
-                    rnode = Node(abs_rsamples,cur,False)
+                    lnode = Node(abs_lsamples,cur,True, lrepr)
+                    rnode = Node(abs_rsamples,cur,False, rrepr)
                     cur.children = (lnode,rnode)
                     tovisit.put((lpriority,lnode))
                     tovisit.put((rpriority,rnode))
@@ -1240,8 +1312,9 @@ class hierarchical_dict(Oc_Dict):
             ga /= np.linalg.norm(ga)
         dictelements = [ga] #global average
         for l in leafs:
-            centroid = sum([self.patches[i] for i in l.samples_idx[1:]],self.patches[l.samples_idx[0]])
-            dictelements += [centroid]
+            #centroid = sum([self.patches[i] for i in l.samples_idx[1:]],self.patches[l.samples_idx[0]])
+            #dictelements += [centroid]
+            dictelements += [l.representative_patch]
         self.centroid_dictelements = dictelements
         self.centroid_matrix = np.vstack([x.flatten() for x in self.centroid_dictelements]).transpose()
         self.centroid_matrix,self.centroid_normalization_coefficients = normalize_matrix(self.centroid_matrix)
@@ -1262,13 +1335,14 @@ class hierarchical_dict(Oc_Dict):
         while len(tovisit) > 0:
             cur = tovisit.pop()
             lnode,rnode = cur.children
-            lpatches_idx = lnode.samples_idx
-            rpatches_idx = rnode.samples_idx
-            centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
-            centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
-            centroid1 /= len(lpatches_idx)
-            centroid2 /= len(rpatches_idx)
-            curdict = centroid1 - centroid2
+            #lpatches_idx = lnode.samples_idx
+            #rpatches_idx = rnode.samples_idx
+            #centroid1 = sum([self.patches[i] for i in lpatches_idx[1:]],self.patches[lpatches_idx[0]])
+            #centroid2 = sum([self.patches[i] for i in rpatches_idx[1:]],self.patches[rpatches_idx[0]])
+            #centroid1 /= len(lpatches_idx)
+            #centroid2 /= len(rpatches_idx)
+            #curdict = centroid1 - centroid2
+            curdict = lnode.representative_patch - rnode.representative_patch
             if normalize:
                 norm = np.linalg.norm(curdict)
                 if norm != 0:
