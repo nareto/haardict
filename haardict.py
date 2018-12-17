@@ -49,8 +49,6 @@ import datetime as dt
 #octave.addpath('ompbox/')
 from haarpsi import haar_psi
 
-_METHODS_ = ['2ddict','ksvd','warmstart']
-_TRANSFORMS_ = ['2dpca','wavelet','wavelet_packet','shearlets']
 WAVPACK_CHARS = 'adhv'
 
 LAST_TIC = dt.datetime.now()
@@ -476,7 +474,7 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     else:
         plt.savefig(savefile)
 
-def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
+def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='haar-dict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
     """Learns dictionary based on the selected method. 
 
     paths: list of paths of images to learn the dictionary from
@@ -484,7 +482,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     patch_size: size of the patches to be extracted
     noisevar: variance of Gaussian noise to add to input images
     method: the chosen method. The possible choices are:
-    	- 2ddict: 2ddict procedure 
+    	- haar-dict: haar-dict procedure 
     	- ksvd: uses the KSVD method
 	- warmstart: uses 2means-2dict as warm start for KSVD
     dictsize: cardinality of dictionary
@@ -492,7 +490,7 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     	- 2dpca: applies 2DPCA transform (see options: twodpca_l,twodpca_r)
     	- wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
     	- wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
-    clustering: the clustering used (only for 2ddict method):
+    clustering: the clustering used (only for haar-dict) method):
     	- twomeans: 2-means on the vectorized samples
         - twomaxoids: 2-maxoids on the vectorized samples
     	- spectral: spectral clustering (slow)
@@ -507,10 +505,6 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     dict_with_transformed_data: if True, the dictionary will be computed using the transformed data instead of the original patches
     """
 
-    if method not in _METHODS_:
-        raise Exception("'method' has to be on of %s" % _METHODS_)
-    if transform is not None and transform not in _TRANSFORMS_:
-        raise Exception("'transform' has to be on of %s" % _TRANSFORMS_)
     images = []
     for f in paths:
         cleanimg = np_or_img_to_array(f,patch_size)
@@ -541,18 +535,24 @@ def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='2ddict',d
     data_to_cluster = transform_instance.transform() #tuple of transformed patches
     
     #BUILD DICT
-    if method == '2ddict':
+    if method == 'haar-dict':
         dictionary = hierarchical_dict(data_to_cluster)
         dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
     elif method == 'ksvd':
         dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
         dictionary.compute()
+    elif method == 'simple-kmeans':
+        dictionary = simple_clustering_dict(data_to_cluster,'Kmeans')
+        dictionary.compute(dictsize)
+    elif method == 'simple-kmaxoids':
+        dictionary = simple_clustering_dict(data_to_cluster,'Kmaxoids')
+        dictionary.compute(dictsize)
     elif method == 'warmstart':
         tempdict = hierarchical_dict(data_to_cluster)
         tempdict.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
         dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity,warmstart=tempdict)
         dictionary.compute()
-    if method == '2ddict':
+    if method == 'haar-dict':
         dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
         dictionary.centroid_dictelements = transform_instance.reverse(dictionary.centroid_dictelements)
         dictionary.set_dicttype(dicttype)
@@ -1054,7 +1054,7 @@ class twomaxoids_clustering(Cluster):
         Cluster.__init__(self,patches)
         self.cluster_matrix = patches2matrix(self.samples)
 
-    def cluster(self, patch_indexes):
+    def cluster(self, patch_indexes,maxoids_as_representative=True):
         """Returns (idx1,idx2,wcss) where idx1 and idx2 are the set of indexes partitioning the data array and wcss is the achieved value of the WCSS function"""
         
         kmax = KMaxoids(self.cluster_matrix[:,patch_indexes],K=2)
@@ -1071,9 +1071,22 @@ class twomaxoids_clustering(Cluster):
         rsamples = (labels != 0).nonzero()[0]
         scaled_val = kmax.val/(len(patch_indexes*self.data_dim))
         pshape = self.samples[0].shape
-        lmax = maxoids[:,0].reshape(pshape)
-        rmax = maxoids[:,1].reshape(pshape)
-        return(lsamples,rsamples,lmax,rmax,scaled_val)
+        if maxoids_as_representative:
+            lmax = maxoids[:,0].reshape(pshape)
+            rmax = maxoids[:,1].reshape(pshape)
+            return(lsamples,rsamples,lmax,rmax,scaled_val)
+        else:
+            lcentroid = None
+            rcentroid = None
+            curpatches = self.samples[patch_indexes]
+            if len(lsamples) > 0 and len(rsamples) > 0:
+                lcentroid = sum([curpatches[i] for i in lsamples[1:]],curpatches[lsamples[0]])
+                rcentroid = sum([curpatches[i] for i in rsamples[1:]],curpatches[rsamples[0]])
+                lcentroid /= len(lsamples)
+                rcentroid /= len(rsamples)
+            return(lsamples,rsamples,lcentroid,rcentroid,scaled_val)
+        
+
         
 
     
@@ -1196,7 +1209,24 @@ class spectral_clustering(Cluster):
         else:
             plt.show()
 
-         
+
+class simple_clustering_dict(Oc_Dict):
+
+    def __init__(self,patch_list,clustering='Kmeans'):
+        Oc_Dict.__init__(self,patch_list)
+        self.clustering = clustering
+
+    def compute(self,dict_card):
+        data_mat = patches2matrix(self.patches)
+        if self.clustering == 'Kmeans':
+            km = KMeans(n_clusters=dict_card,tol=0.1).fit(data_mat.transpose())
+            self.matrix = km.cluster_centers_.transpose()
+        elif self.clustering == 'Kmaxoids':
+            kM = KMaxoids(data_mat,K=dict_card)
+            self.matrix,labels = kM.run()
+        self.dictelements = matrix2patches(self.matrix)
+        self.dictsize = dict_card
+            
         
 class hierarchical_dict(Oc_Dict):
 

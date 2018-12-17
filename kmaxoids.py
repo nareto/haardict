@@ -29,9 +29,6 @@ class KMaxoids():
         for i in range(nruns):
             maxoids,labels = self._run_once(maxit)
             val = np.sum((self.Y - maxoids[:,labels])**2)
-            #val = 0
-            #for colnum,dpoint in self.Y.transpose():
-            #    val += np.linalg.norm(dpoint - maxoids[:,labels[colnum]])**2
             if val < best_val:
                 best_val = val
                 best_max,best_labels = maxoids,labels
@@ -52,13 +49,12 @@ class KMaxoids():
             
             #update maxoids
             for k in range(self.K):
-                dat_mat = self.Y[:,labels == k]
-                max_mat = np.hstack([maxoids[:,0:k],maxoids[:,k+1:]]).transpose()
-                sum_dist = -np.infty
-                for dpoint in dat_mat.transpose():
-                    dist = np.sum((max_mat - dpoint)**2)
-                    if dist > sum_dist:
-                        maxoids[:,k] = dpoint
-                        sum_dist = dist
+                Mk = np.hstack([maxoids[:,0:k],maxoids[:,k+1:]]).transpose()
+                Yk = self.Y[:,labels == k].transpose()
+                Mk_br = Mk[np.newaxis,:,:]
+                Yk_br = Yk[:,np.newaxis,:]
+                summat = np.sum((Yk_br - Mk_br)**2,axis=(1,2))
+                maxoids[:,k] = Yk[np.argmax(summat)]
 
         return(maxoids,labels)
+    

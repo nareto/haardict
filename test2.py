@@ -21,12 +21,12 @@ import copy
 
 np.random.seed(123)
 
-save = False
-#save = True
+#save = False
+save = True
 
 figures = True
 #figures = False
-testid = 'kmax'
+testid = 'simple_clustering'
 #testid = 'fp1->fp2'
 now = dt.datetime.now()
 date = '_'.join(map(str,[now.year,now.month,now.day])) + '-'+'-'.join(map(str,[now.hour,now.minute]))
@@ -35,10 +35,10 @@ base_save_dir = '/Users/renato/nextcloud/phd/'
 save_prefix = 'jimg/'+date+'-'+testid
 #learnimg = 'img/flowers_pool.cr2'
 #codeimg = 'img/flowers_pool.cr2'
-learnimgs = ['img/flowers_pool-rescale.npy']
+#learnimgs = ['img/flowers_pool-rescale.npy']
 #learnimgs = ['img/flowers_pool-rescale.npy','img/boat512.png','img/barbara512.png']
 #learnimgs = ['img/flowers_pool-rescale.npy', 'img/house256.png','img/cameraman256.png','img/barbara512.png']
-#learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
+learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
 #learnimgs = ['img/peppers256.png']
 #learnimgs = ['img/cameraman256.png']
 #learnimgs = ['img/landscape1-rescaled.jpg']
@@ -46,8 +46,8 @@ learnimgs = ['img/flowers_pool-rescale.npy']
 #learnimgs = ['img/fingerprint512.png','img/fprint1.png']
 #learnimgs = ['img/seis0_orig.eps','img/seis2_orig.eps']
 #codeimg = 'img/landscape2-rescaled.jpg'
-codeimg = 'img/flowers_pool-rescale.npy'
-#codeimg = 'img/boat512.png'
+#codeimg = 'img/flowers_pool-rescale.npy'
+codeimg = 'img/boat512.png'
 #codeimg = 'img/cameraman256.png'
 #codeimg = 'img/peppers256.png'
 #codeimg = 'img/fprint3.bmp'
@@ -59,12 +59,13 @@ codeimg = 'img/flowers_pool-rescale.npy'
 #codeimg = 'img/flowers_pool-small.npy'
 #patch_size = (16,16)
 #patch_size = (24,24)
-#patch_size = (32,32)
-patch_size = (8,8)
-npatches = None
-#npatches = 500
+patch_size = (32,32)
+#patch_size = (8,8)
+#npatches = None
+npatches = 300
 sparsity = 5
-meth = '2ddict'
+meth = 'haar-dict'
+#meth = 'simple-kmeans'
 #meth = 'ksvd'
 #meth = 'warmstart'
 #test_meths = ['ksvd']
@@ -75,7 +76,7 @@ clust = 'twomaxoids'
 
 noise = 0
 
-dictsize = 100
+dictsize = 85
 #dictsize = None
 cluster_epsilon = None
 #cluster_epsilon = 3e-4 #for emd spectral on 8x8 patches -> 47 card. for haarpsi -> 83
@@ -138,20 +139,20 @@ def main():
     print_test_parameters(dictionary,learn_time,rec_time)
     storage = storage_cost(dictionary,coefs, sparsity, bits = b)
     print_rec_results(dictionary,rec,img,coefs,storage,learn_time,noisy_img=noisy_img)
-    if meth == '2ddict':
+    if meth == 'haar-dict':
         dictionary2 = copy.deepcopy(dictionary)
         dictionary2.set_dicttype('centroids')
         rec2,coefs2,time,noisy_img2 = reconstruct(dictionary2,codeimg,patch_size,sparsity,noisevar=noise)
         storage2 = storage_cost(dictionary2,coefs2, sparsity, bits = 64)
         print_rec_results(dictionary2,img,rec2,coefs2,storage2,learn_time,noisy_img=None,firstorgline=False)
-    if meth == '2ddict':
+    if meth == 'haar-dict':
         tag = dictionary.dicttype + ':'
         tag2 = dictionary2.dicttype + ':'
     else:
         tag = ''
     if figures:
-        print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=noisy_img,simhist=True if (meth == '2ddict' and clust == 'spectral') else False)
-        if meth == '2ddict':
+        print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=noisy_img,simhist=True if (meth == 'haar-dict' and clust == 'spectral') else False)
+        if meth == 'haar-dict':
             print_and_save_figures(dictionary2,img,rec2,coefs2,tag2,simhist=False)
         if show_sc_egvs:
             dictionary.clustering.plotegvecs()
@@ -168,7 +169,7 @@ def print_test_parameters(dictionary,learn_time,rec_time):
             desc_string += ' - l = %d, r = %d' % (tdpcal,tdpcar)
     if noise is not 0:
         desc_string += '\nNoise variance: %f' % noise
-    if meth == '2ddict':
+    if meth == 'haar-dict':
         if dictionary.visit == 'fifo':
             desc_string += '\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (clust,cluster_epsilon,dictionary.tree_depth,dictionary.tree_sparsity)
         else:
@@ -196,7 +197,7 @@ def print_rec_results(dictionary,img,rec,coefs,storage_cost,learn_time,noisy_img
         mcstring = str(mc)+' (atoms %d and %d)'%(argmc[0],argmc[1])
     else:
         mcstring = '-'
-    if meth == '2ddict':
+    if meth == 'haar-dict':
         if dictionary.visit == 'fifo':
             meth_string = '-'.join((meth,clust,dictionary.dicttype,('%.2e' % cluster_epsilon)))
         else:
@@ -213,7 +214,7 @@ def print_rec_results(dictionary,img,rec,coefs,storage_cost,learn_time,noisy_img
 def print_and_save_figures(dictionary,img,rec,coefs,tag,noisy_img=None,simhist=False):
     savename = save_prefix + '-%s-%s' % (meth,tag.rstrip(':'))
     savename += '-%dx%d' % patch_size
-    if meth == '2ddict':
+    if meth == 'haar-dict':
         if clust == 'twomeans':
             savename += '-2means'
         elif clust == 'twomaxoids':

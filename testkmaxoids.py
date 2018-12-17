@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from kmaxoids import KMaxoids,KMaxoids_naive
+from kmaxoids import KMaxoids
 from sklearn.datasets.samples_generator import make_blobs
 from sklearn.cluster import KMeans
 
@@ -14,7 +14,7 @@ from sklearn.cluster import KMeans
 
 #make_blobs(n_samples=100, n_features=2, centers=None, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=None)
 
-def make_gauss_blob(center,pca1,var1=2,var2=0.5,npoints=100):
+def make_gauss_blob(center,pca1,var1=2,var2=0.5,npoints=1000):
     points = []
     pca1 = np.array(pca1)
     center = np.array(center)
