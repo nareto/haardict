@@ -66,7 +66,7 @@ def toc(printstr=True):
 
 def np_or_img_to_array(path,crop_to_patchsize=None):
     if path[-3:].upper() in  ['JPG','GIF','PNG','EPS','BMP']:
-        ret = skimage.io.imread(path,as_grey=True).astype('float64')/255
+        ret = skimage.io.imread(path,as_gray=True).astype('float64')/255
     elif path[-3:].upper() in  ['NPY']:
         ret = np.load(path)
     elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
@@ -77,11 +77,11 @@ def np_or_img_to_array(path,crop_to_patchsize=None):
         ret = ret[:M-(M%m),:N-(N%n)]
     return(ret)
 
-def read_raw_img(img,as_grey=True):
+def read_raw_img(img,as_gray=True):
     import rawpy
     raw = rawpy.imread(img)
     rgb = raw.postprocess()
-    if not as_grey:
+    if not as_gray:
         return(rgb)
     else:
         #gray = (rgb[:,:,0] + rgb[:,:,1] + rgb[:,:,2])/3
@@ -350,14 +350,6 @@ def positional_string(encoding):
         out[idx] = 1
     return(out)
 
-def storage_cost(dictionary, encoding, sparsity, bits=64):
-    """Returns the estimated storage cost of the D,X (dictionary,encoding) pair in bits"""
-
-    K,N = encoding.shape
-    n = dictionary.atom_dim
-    positional_entropy = entropy(positional_string(encoding))
-    out = K*n*bits + sparsity*N*bits + N*K*positional_entropy
-    return(out)
 
 def extract_patches(array,size=(8,8)):
     """Returns list of small arrays partitioning the large 2D input array. It's the inverse operation of assemble_patches"""
@@ -489,7 +481,7 @@ class Saveable():
 class Test(Saveable):
     """Class to test the various dictionaries proposed in the paper for image reconstruction tasks"""
 
-    def __init__(self,file_paths,npatches=None,patch_size=(8,8),noisevar=0):
+    def __init__(self,file_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None):
         """
         file_paths: path of image or list of paths of images to extract patches from
         npatches: number of patches to use. If None then all patches will be used for training
@@ -502,17 +494,22 @@ class Test(Saveable):
         self.npatches =  npatches
         self.patch_size = patch_size
         self.noisevar = noisevar
-        self.debug = True
+        self.debug = False
         self.dictionary = None
         self.reconstructed_img = None
+        if test_id is None:
+            now = dt.datetime.now()
+            test_id = '-'.join(map(str,[now.year,now.month,now.day])) + '_'+':'.join(map(str,[now.hour,now.minute,now.second]))
+        self.test_id = test_id
         self._extract_patches()
 
-    def learn_dict(self,method='haar-dict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='frobenius',simmeasure_beta=0.5,affinity_matrix_threshold=0.5,ksvdsparsity=None,transform=None,twodpca_l=4,twodpca_r=4,wav_lev=1,wavelet='haar',dicttype='haar'):
+    def learn_dict(self,method='haar-dict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='frobenius',simmeasure_beta=0.5,affinity_matrix_threshold=0.5,ksvdsparsity=None,transform=None,twodpca_l=4,twodpca_r=4,wav_lev=1,wavelet='haar'):
         """
         Learns dictionary with selected parameters.
 
         method: the chosen method. The possible choices are:
-            - haar-dict: haar-dict procedure 
+            - haar-dict: haar-like coefficients of hierarchical dictionary
+            - centroids-dict: centroids of hierarchical dictionary
             - ksvd: uses the KSVD method
             - warmstart: uses 2means-2dict as warm start for KSVD
         dictsize: cardinality of dictionary
@@ -520,7 +517,7 @@ class Test(Saveable):
             - 2dpca: applies 2DPCA transform (see also: twodpca_l,twodpca_r)
             - wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
             - wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
-        clustering: the clustering procedure (used only for haar-dict method):
+        clustering: the clustering procedure (used only for haar-dict and centroids-dict method):
             - twomeans: 2-means on the vectorized samples
             - twomaxoids: 2-maxoids on the vectorized samples
             - spectral: spectral clustering (slow)
@@ -538,7 +535,7 @@ class Test(Saveable):
         self.learning_transform = transform
         tic()
         self._transform_patches(twodpca_l,twodpca_r,wav_lev,wavelet)
-        self._train_dict(dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity,dicttype)
+        self._train_dict(dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity)
         self.learning_time = toc(self.debug)
 
 
@@ -546,19 +543,19 @@ class Test(Saveable):
         """
         Reconstructs image in imgpath with given sparsity using previously learned dictionary 
         """
-        self.codeimg = imgpath
+        self.codeimg_path = imgpath
         self.rec_sparsity = sparsity
         
         if self.dictionary is None:
             raise Exception("No learned dictionary found")
         
-        cleanimg = np_or_img_to_array(imgpath,self.patch_size)
+        self.codeimg = np_or_img_to_array(imgpath,self.patch_size)
         if self.noisevar == 0:
-            img = cleanimg
-            self.nimg = None
+            img = self.codeimg
+            self.noisy_codeimg = None
         else:
-            self.nimg = cleanimg + np.random.normal(0,self.noisevar,cleanimg.shape)
-            img = self.nimg
+            self.noisy_codeimg = self.codeimg + np.random.normal(0,self.noisevar,self.codeimg.shape)
+            img = self.noisy_codeimg
         patches = extract_patches(img,self.patch_size)
 
         tic()
@@ -571,9 +568,10 @@ class Test(Saveable):
         self.reconstruction_time = toc(self.debug)
         if clip:
             self.reconstructed_img = clip(reconstructed)
+        self._compute_rec_quality()            
         return(self.reconstructed_img)        
 
-        
+
     def _extract_patches(self):
         images = []
         for f in self.file_paths:
@@ -605,10 +603,10 @@ class Test(Saveable):
             self.transform_instance = dummy_transform(self.patches)
         self.data_to_cluster = self.transform_instance.transform() #tuple of transformed patches
 
-    def _train_dict(self,dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity,dicttype):
-        if self.learning_method == 'haar-dict':
+    def _train_dict(self,dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity):
+        if self.learning_method in ['haar-dict', 'centroids-dict']:
             self.dictionary = hierarchical_dict(self.data_to_cluster)
-            self.dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
+            self.dictionary.compute(clustering,self.learning_method,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
         elif self.learning_method == 'ksvd':
             self.dictionary = ksvd_dict(self.data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
             self.dictionary.compute()
@@ -623,42 +621,73 @@ class Test(Saveable):
             tempdict.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
             self.dictionary = ksvd_dict(self.data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity,warmstart=tempdict)
             self.dictionary.compute()
-        if self.learning_method == 'haar-dict':
-            self.dictionary.haar_dictelements = self.transform_instance.reverse(self.dictionary.haar_dictelements)
-            self.dictionary.centroid_dictelements = self.transform_instance.reverse(self.dictionary.centroid_dictelements)
-            self.dictionary.set_dicttype(dicttype)
+        #if self.learning_method in ['haar-dict','centroids-dict']:
+        #    self.dictionary.haar_dictelements = self.transform_instance.reverse(self.dictionary.haar_dictelements)
+        #    self.dictionary.centroid_dictelements = self.transform_instance.reverse(self.dictionary.centroid_dictelements)
+        #    self.dictionary.set_dicttype(dicttype)
         else:
             self.dictionary.dictelements = self.transform_instance.reverse(self.dictionary.dictelements)
             self.dictionary._dictelements_to_matrix()
 
+    def _compute_rec_quality(self):
+        if self.noisevar > 0:
+            n_hpi = haar_psi(255*self.codeimg,255*self.noisy_codeimg)[0]
+            n_psnr = psnr(self.codeimg,self.noisy_codeimg)
+        else:
+            n_hpi = '-'
+            n_psnr = '-'
+        self.noise_haarpsi = n_hpi
+        self.noise_psnr = n_psnr
+        self.reconstructed_haarpsi = haar_psi(255*self.codeimg,255*self.reconstructed_img)[0]
+        self.reconstructed_psnr = psnr(self.codeimg,self.reconstructed_img)
+        self._storage_cost()
+        self.qindex =  self.encoding_bits*self.codeimg.size*self.reconstructed_haarpsi/self.storage_cost
+
+    def _storage_cost(self, bits=64):
+        """Returns the estimated storage cost of the D,X (dictionary,encoding) pair in bits"""
+
+        self.encoding_bits = bits
+        K,N,n = self.dictionary.dictsize, self.dictionary.npatches, self.dictionary.atom_dim
+        positional_entropy = entropy(positional_string(self.rec_coefs))
+        self.storage_cost = K*n*bits + self.rec_sparsity*N*bits + N*K*positional_entropy
 
     def show_rec_img(self):
         plt.imshow(self.reconstructed_img,cmap=plt.cm.gray)
         plt.show()
 
     def print_results(self):
+        """
+        Prints all the parameters and results of the test
+        """
+        
         if self.reconstructed_img is None:
             raise Exception("No reconstructed image found")
         desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
-        desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nCoding sparsity: %d\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
-            (self.file_paths,self.codeimg,self.patch_size,len(self.dictionary.patches),self.learning_method,self.rec_sparsity,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
+        desc_string += '\nTest id: %s' % self.test_id
+        desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nDictionary cardinality: %d\nCoding sparsity:%d \nLearning method: %s\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
+            (self.file_paths,self.codeimg_path,self.patch_size,len(self.dictionary.patches),self.dictionary.dictsize,self.rec_sparsity,self.learning_method,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
         if self.learning_transform is not None:
             desc_string += '\nLearning transform: %s' % (learn_transf)
             if self.learning_transform in ['wavelet','wavelet_packet']:
                 desc_string += ' - %s' % self.transform_instance.wavelet
             if learn_transf is '2dpca':
                 desc_string += ' - l = %d, r = %d' % (self.transform_instance.l,self.transform_instance.r)
-        if self.noisevar is not 0:
-            desc_string += '\nNoise variance: %f' % self.noisevar
-        if self.learning_method == 'haar-dict':
+        if self.learning_method in ['haar-dict','centroids-dict']:
             if self.dictionary.visit == 'fifo':
                 desc_string += '\nTree visit type: FIFO\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (self.dictionary.clustering_method,self.dictionary.clust_epsilon,self.dictionary.tree_depth,self.dictionary.tree_sparsity)
             else:
                 desc_string += '\nTree visit type: Priority Queue\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (self.dictionary.clustering_method,self.dictionary.tree_depth,self.dictionary.tree_sparsity)
             if self.dictionary.clustering_method == 'spectral':
-                desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
+                desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (self.dictionary.clustering.similarity_measure,self.dictionary.clustering.affinity_matrix_nonzero_perc)
+
+        if self.noisevar is not 0:
+            desc_string += '\nNoise variance: %f\nNoisy PSNR: %f\nNoisy HaarPSI: %f' %\
+                (self.noisevar,self.noise_psnr,self.noise_haarpsi)
+        desc_string += '\nReconstruction PSNR: %f\nReconstruction HaarPSI: %f\nEncoding + dictionary storage cost (%d bits): %f\nHaarPSI/storage cost: %f' % (self.reconstructed_psnr,self.reconstructed_haarpsi,self.encoding_bits,self.storage_cost,self.qindex)
         print(desc_string)
 
+    def print_and_save_orgmode(self,tag=None,simhist=False):
+        pass
         
 class Transform(Saveable):
     """Transform for 2D data. Input: list of patches"""
@@ -817,6 +846,7 @@ class Oc_Dict(Saveable):
         self.matrix,self.normalization_coefficients = normalize_matrix(self.matrix)
         self.atom_dim = self.matrix.shape[0]
 
+        
     def max_similarities(self,similarity_measure='frobenius',progress=True):
         """Computes self.max_sim, array of maximum similarities between dictionary atoms and input patches"""
         
@@ -1298,11 +1328,12 @@ class hierarchical_dict(Oc_Dict):
         Oc_Dict.__init__(self,patch_list)
         self.dicttype = 'haar'
 
-    def compute(self,clustering_method,nbranchings=None,epsilon=None,minsamples=5,\
+    def compute(self,clustering_method,dicttype='haar-dict',nbranchings=None,epsilon=None,minsamples=5,\
                 spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5):
         if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
         self.clustering_method = clustering_method
+        self.dicttype = dicttype
         if clustering_method == 'twomeans':
             self.clustering = twomeans_clustering(self.patches)
         elif clustering_method == 'twomaxoids':
@@ -1381,24 +1412,30 @@ class hierarchical_dict(Oc_Dict):
 
         if self.tree_depth == 0:
             raise Exception('Tree depth is 0')
-        self._tree2dict_centroids(normalize)
-        self._tree2dict_haar(normalize)
-        self.set_dicttype('haar') #set default dicttype
-
-    def set_dicttype(self, dtype):
-        self.dicttype = dtype
-        if self.dicttype == 'haar':
-            #self.matrix = self.haar_matrix
-            #self.normalization_coefficients = self.haar_normalization_coefficients
+        if self.dicttype == 'haar-dict':
+            self._tree2dict_haar(normalize)
             self.dictelements = self.haar_dictelements
-        elif self.dicttype == 'centroids':
-            #self.matrix = self.centroid_matrix
-            #self.normalization_coefficients = self.centroid_normalization_coefficients
+        elif self.dicttype == 'centroids-dict':
+            self._tree2dict_centroids(normalize)
             self.dictelements = self.centroid_dictelements
-        else:
-            raise Exception("dicttype must be either 'haar' or 'centroids'")
         self._dictelements_to_matrix()
         self.dictsize = len(self.dictelements)
+        #self.set_dicttype(self.dicttype) #set default dicttype
+
+    #def set_dicttype(self, dtype):
+    #    self.dicttype = dtype
+    #    if self.dicttype == 'haar-dict':
+    #        #self.matrix = self.haar_matrix
+    #        #self.normalization_coefficients = self.haar_normalization_coefficients
+    #        self.dictelements = self.haar_dictelements
+    #    elif self.dicttype == 'centroids-dict':
+    #        #self.matrix = self.centroid_matrix
+    #        #self.normalization_coefficients = self.centroid_normalization_coefficients
+    #        self.dictelements = self.centroid_dictelements
+    #    else:
+    #        raise Exception("dicttype must be either 'haar' or 'centroids'")
+    #    self._dictelements_to_matrix()
+    #    self.dictsize = len(self.dictelements)
         
     def _tree2dict_centroids(self, normalize=True):
         leafs = self.leafs
