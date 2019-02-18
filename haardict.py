@@ -28,7 +28,7 @@ import skimage.io
 import skimage.color
 from skimage.filters import threshold_otsu
 import scipy.sparse
-from scipy.spatial.distance import pdist
+#from scipy.spatial.distance import pdist
 import pyemd
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
@@ -64,26 +64,18 @@ def toc(printstr=True):
         print('%f seconds elapsed' % ret)
     return(ret)
 
-def sumsupto(k):
-    return(k*(k+1)/2)
-
-def matrix2patches(matrix,shape=None):
-    """Returns list of arrays obtained from columns of matrix"""
-    m,n = matrix.shape
-    if shape is None:
-        size = int(np.sqrt(m))
-        shape = (size,size)
-    patches = []
-    for col in matrix.transpose():
-        patches.append(col.reshape(shape))
-    return(patches)
-
-def patches2matrix(patches):
-    """Returns matrix with columns given by flattened arrays in input"""
-    
-    m = patches[0].size
-    matrix = np.hstack([p.reshape(m,1) for p in patches])
-    return(matrix)
+def np_or_img_to_array(path,crop_to_patchsize=None):
+    if path[-3:].upper() in  ['JPG','GIF','PNG','EPS','BMP']:
+        ret = skimage.io.imread(path,as_grey=True).astype('float64')/255
+    elif path[-3:].upper() in  ['NPY']:
+        ret = np.load(path)
+    elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
+        ret = read_raw_img(path)
+    if crop_to_patchsize is not None:
+        m,n = crop_to_patchsize
+        M,N = ret.shape
+        ret = ret[:M-(M%m),:N-(N%n)]
+    return(ret)
 
 def read_raw_img(img,as_grey=True):
     import rawpy
@@ -117,6 +109,27 @@ def clip(img):
     out[out < 0] = 0
     out[out > 255] = 255
     return(out)
+
+def sumsupto(k):
+    return(k*(k+1)/2)
+
+def matrix2patches(matrix,shape=None):
+    """Returns list of arrays obtained from columns of matrix"""
+    m,n = matrix.shape
+    if shape is None:
+        size = int(np.sqrt(m))
+        shape = (size,size)
+    patches = []
+    for col in matrix.transpose():
+        patches.append(col.reshape(shape))
+    return(patches)
+
+def patches2matrix(patches):
+    """Returns matrix with columns given by flattened arrays in input"""
+    
+    m = patches[0].size
+    matrix = np.hstack([p.reshape(m,1) for p in patches])
+    return(matrix)
 
 def stack(mat):
     out = np.hstack(np.vsplit(mat,mat.shape[0])).transpose()
@@ -284,14 +297,14 @@ def twomeansval(values,k):
         val += (s-c2bar)**2
     return(val,dist)
 
-def is_sorted(values):
-    """Returns True if values is sorted decreasingly, False otherwise"""
-    
-    prev_v = values[0]
-    for v in values[1:]:
-        if v < prev_v:
-            return(False)
-    return(True)
+#def is_sorted(values):
+#    """Returns True if values is sorted decreasingly, False otherwise"""
+#    
+#    prev_v = values[0]
+#    for v in values[1:]:
+#        if v < prev_v:
+#            return(False)
+#    return(True)
 
 def oneDtwomeans(values):
     """Computes 2-means value of 1D data in values, which must be ordered increasingly"""
@@ -338,7 +351,7 @@ def positional_string(encoding):
     return(out)
 
 def storage_cost(dictionary, encoding, sparsity, bits=64):
-    """Returns the estimated storage cost of the D,X pair in bits"""
+    """Returns the estimated storage cost of the D,X (dictionary,encoding) pair in bits"""
 
     K,N = encoding.shape
     n = dictionary.atom_dim
@@ -347,7 +360,7 @@ def storage_cost(dictionary, encoding, sparsity, bits=64):
     return(out)
 
 def extract_patches(array,size=(8,8)):
-    """Returns list of small arrays partitioning the input array. See also assemble_patches"""
+    """Returns list of small arrays partitioning the large 2D input array. It's the inverse operation of assemble_patches"""
     
     ret = []
     height,width = array.shape
@@ -359,7 +372,7 @@ def extract_patches(array,size=(8,8)):
     return(ret)
 
 def assemble_patches(patches,out_size):
-    """Returns an array given by row-stacking the arrays in patches. See also extract_patches"""
+    """Returns a large 2D array given by row-stacking the arrays in patches, which should be a list. It's the inverse operation of extract_patches"""
     
     height,width = out_size
     out = np.zeros(shape=out_size)
@@ -385,12 +398,12 @@ def low_rank_approx(svdtuple=None, A=None, r=1):
         ret += s[i] * np.outer(u.T[i], v[i])
     return(ret)
 
-def affinity_matrix2(samples,similarity_measure,threshold):
-    X = patches2matrix(samples).T
-    return(pdist(X,similarity_measure))
+#def affinity_matrix2(samples,similarity_measure,threshold):
+#    X = patches2matrix(samples).T
+#    return(pdist(X,similarity_measure))
 
 def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
-    """Returns sparse matrix representation of matrix of pairwise similarities, keeping only the pairwise similarities that are below the given threshold"""
+    """Returns column-sparse representation of matrix of pairwise similarities, keeping only the pairwise similarities that are below the given threshold"""
 
     nsamples = len(samples)
     print('Computing affinity matrix...')
@@ -432,22 +445,9 @@ def covariance_matrix(patches):
     return(ret)
 
 
-def np_or_img_to_array(path,crop_to_patchsize=None):
-    if path[-3:].upper() in  ['JPG','GIF','PNG','EPS','BMP']:
-        ret = skimage.io.imread(path,as_grey=True).astype('float64')/255
-    elif path[-3:].upper() in  ['NPY']:
-        ret = np.load(path)
-    elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
-        ret = read_raw_img(path)
-    if crop_to_patchsize is not None:
-        m,n = crop_to_patchsize
-        M,N = ret.shape
-        ret = ret[:M-(M%m),:N-(N%n)]
-    return(ret)
 
 def show_or_save_patches(patchlist,rows,cols,savefile=None):
-    #fig, axis = plt.subplots(rows,cols,sharex=True,sharey=True,squeeze=True)
-    #fig, axis = plt.subplots(rows,cols,squeeze=True)
+    """Makes a plot of the patches in patchlist and either shows it or saves it to savefile"""
     fig, axis = plt.subplots(rows,cols)
     for idx,ax in np.ndenumerate(axis):
         try:
@@ -468,124 +468,10 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
     #plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.1,hspace=0.1)
     plt.subplots_adjust(left=0.1,right=0.45,bottom=0.1,top=0.9,wspace=0.1,hspace=0.1)
     #plt.subplot_tool()
-    
     if savefile is None:
         plt.show()
     else:
         plt.savefig(savefile)
-
-def learn_dict(paths,npatches=None,patch_size=(8,8),noisevar=0,method='haar-dict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='haarpsi',simmeasure_beta=0.06,affinity_matrix_threshold=1,ksvdsparsity=2,transform=None,twodpca_l=3,twodpca_r=3,wav_lev=3,dict_with_transformed_data=False,wavelet='haar',dicttype='haar'):
-    """Learns dictionary based on the selected method. 
-
-    paths: list of paths of images to learn the dictionary from
-    npatches: if an int, only this number of patches (out of the complete set extracted from the learning images) will be used for learning
-    patch_size: size of the patches to be extracted
-    noisevar: variance of Gaussian noise to add to input images
-    method: the chosen method. The possible choices are:
-    	- haar-dict: haar-dict procedure 
-    	- ksvd: uses the KSVD method
-	- warmstart: uses 2means-2dict as warm start for KSVD
-    dictsize: cardinality of dictionary
-    transform: whether to transform the data before applying the method:
-    	- 2dpca: applies 2DPCA transform (see options: twodpca_l,twodpca_r)
-    	- wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
-    	- wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
-    clustering: the clustering used (only for haar-dict) method):
-    	- twomeans: 2-means on the vectorized samples
-        - twomaxoids: 2-maxoids on the vectorized samples
-    	- spectral: spectral clustering (slow)
-	- random: random clustering
-    cluster_epsilon: threshold for clustering (lower = finer clustering)
-    spectral_similarity: similarity measure used for spectral clustering. Can be 'frobenius','haarpsi' or 'emd' (earth's mover distance)
-    simmeasure_beta: beta parameter for Frobenius and Earth Mover's distance similarity measures
-    affinity_matrix_threshold: threshold for pairwise similarities in affinity matrix
-    twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
-    wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
-    wav_lev: number of levels for the wavelet transform
-    dict_with_transformed_data: if True, the dictionary will be computed using the transformed data instead of the original patches
-    """
-
-    images = []
-    for f in paths:
-        cleanimg = np_or_img_to_array(f,patch_size)
-        if noisevar == 0:
-            img = cleanimg
-        else:
-            img = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
-        images.append(img)
-
-    patches = []
-    for i in images:
-        patches += [p for p in extract_patches(i,patch_size)]
-    #patches = np.array(patches)
-    if npatches is not None:
-        patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:npatches]
-    print('Working with %d patches' % len(patches))
-
-    tic()
-    #TRANSFORM
-    if transform == '2dpca':
-        transform_instance = twodpca_transform(patches,twodpca_l,twodpca_r)
-    elif transform == 'wavelet':
-        transform_instance = wavelet_transform(patches,wav_lev,wavelet)
-    elif transform == 'wavelet_packet':
-        transform_instance = wavelet_packet(patches,wavelet)
-    elif transform is None:
-        transform_instance = dummy_transform(patches)
-    data_to_cluster = transform_instance.transform() #tuple of transformed patches
-    
-    #BUILD DICT
-    if method == 'haar-dict':
-        dictionary = hierarchical_dict(data_to_cluster)
-        dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
-    elif method == 'ksvd':
-        dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
-        dictionary.compute()
-    elif method == 'simple-kmeans':
-        dictionary = simple_clustering_dict(data_to_cluster,'Kmeans')
-        dictionary.compute(dictsize)
-    elif method == 'simple-kmaxoids':
-        dictionary = simple_clustering_dict(data_to_cluster,'Kmaxoids')
-        dictionary.compute(dictsize)
-    elif method == 'warmstart':
-        tempdict = hierarchical_dict(data_to_cluster)
-        tempdict.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
-        dictionary = ksvd_dict(data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity,warmstart=tempdict)
-        dictionary.compute()
-    if method == 'haar-dict':
-        dictionary.haar_dictelements = transform_instance.reverse(dictionary.haar_dictelements)
-        dictionary.centroid_dictelements = transform_instance.reverse(dictionary.centroid_dictelements)
-        dictionary.set_dicttype(dicttype)
-    else:
-        dictionary.dictelements = transform_instance.reverse(dictionary.dictelements)
-        dictionary._dictelements_to_matrix()
-    time = toc(False)
-    #ipdb.set_trace()
-    return(dictionary,time)
-
-def reconstruct(oc_dict,imgpath,patch_size,sparsity=5,noisevar=0):
-    clip = False
-    spars= sparsity
-    cleanimg = np_or_img_to_array(imgpath,patch_size)
-    if noisevar == 0:
-        img = cleanimg
-        nimg = None
-    else:
-        nimg = cleanimg + np.random.normal(0,noisevar,cleanimg.shape)
-        img = nimg
-    patches = extract_patches(img,patch_size)
-
-    tic()
-    outpatches = []
-    means,coefs = oc_dict.encode_patches(patches,spars)
-    rec_patches = oc_dict.reconstruct_patches(coefs,means)
-    
-    #reconstructed_patches = [p.reshape(patch_size) for p in rec_matrix.transpose()]
-    reconstructed = assemble_patches(rec_patches,img.shape)
-    time = toc(False)
-    if clip:
-        reconstructed = clip(reconstructed)
-    return(reconstructed,coefs,time,nimg)        
 
 class Saveable():
     def save_pickle(self,filepath):
@@ -599,30 +485,181 @@ class Saveable():
         f.close()
         self.__dict__.update(tmpdict)
     
-class Node():
-    def __init__(self,samples_idx,parent,isleftchild=True,representative_patch=None):
-        self.parent = parent
-        if parent is None:
-            self.depth = 0
-            self.idstr = ''
+
+class Test(Saveable):
+    """Class to test the various dictionaries proposed in the paper for image reconstruction tasks"""
+
+    def __init__(self,file_paths,npatches=None,patch_size=(8,8),noisevar=0):
+        """
+        file_paths: path of image or list of paths of images to extract patches from
+        npatches: number of patches to use. If None then all patches will be used for training
+        patch_size: size of patches to be extracted
+        noisevar: variance of Gaussian noise to be added to input images
+        """
+        if type(file_paths) != type([]):
+            file_paths = [file_paths]
+        self.file_paths = file_paths
+        self.npatches =  npatches
+        self.patch_size = patch_size
+        self.noisevar = noisevar
+        self.debug = True
+        self.dictionary = None
+        self.reconstructed_img = None
+        self._extract_patches()
+
+    def learn_dict(self,method='haar-dict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='frobenius',simmeasure_beta=0.5,affinity_matrix_threshold=0.5,ksvdsparsity=None,transform=None,twodpca_l=4,twodpca_r=4,wav_lev=1,wavelet='haar',dicttype='haar'):
+        """
+        Learns dictionary with selected parameters.
+
+        method: the chosen method. The possible choices are:
+            - haar-dict: haar-dict procedure 
+            - ksvd: uses the KSVD method
+            - warmstart: uses 2means-2dict as warm start for KSVD
+        dictsize: cardinality of dictionary
+        transform: whether to transform the data before applying the method:
+            - 2dpca: applies 2DPCA transform (see also: twodpca_l,twodpca_r)
+            - wavelet: applies wavelet transform to patches - see also wav_lev, wavelet
+            - wavelet_packet: appliest wavelet_packet transform to patches - see also wavelet
+        clustering: the clustering procedure (used only for haar-dict method):
+            - twomeans: 2-means on the vectorized samples
+            - twomaxoids: 2-maxoids on the vectorized samples
+            - spectral: spectral clustering (slow)
+            - random: random clustering (used for testing)
+        cluster_epsilon: threshold for clustering (lower = finer clustering)
+        spectral_similarity: similarity measure used for spectral clustering. Can be 'frobenius','haarpsi' or 'emd' (earth's mover distance)
+        simmeasure_beta: beta parameter for Frobenius and Earth Mover's distance similarity measures
+        affinity_matrix_threshold: threshold for pairwise similarities in affinity matrix
+        ksvdsparsity: sparsity used for OMP in training KSVD. Should be explicitly set.
+        twodpca_l,twodpca_r: number of left and right feature vectors used in 2DPCA; the feature matrices will be twodpca_l x twodpca_r
+        wavelet: type of wavelet for wavelet or wavelet_packet transformations. Default: haar
+        wav_lev: number of levels for the wavelet transform
+"""
+        self.learning_method = method
+        self.learning_transform = transform
+        tic()
+        self._transform_patches(twodpca_l,twodpca_r,wav_lev,wavelet)
+        self._train_dict(dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity,dicttype)
+        self.learning_time = toc(self.debug)
+
+
+    def reconstruct(self,imgpath,sparsity=2,clip=False):
+        """
+        Reconstructs image in imgpath with given sparsity using previously learned dictionary 
+        """
+        self.codeimg = imgpath
+        self.rec_sparsity = sparsity
+        
+        if self.dictionary is None:
+            raise Exception("No learned dictionary found")
+        
+        cleanimg = np_or_img_to_array(imgpath,self.patch_size)
+        if self.noisevar == 0:
+            img = cleanimg
+            self.nimg = None
         else:
-            self.depth = self.parent.depth + 1
-            if isleftchild:
-                self.idstr = parent.idstr + '0'
+            self.nimg = cleanimg + np.random.normal(0,self.noisevar,cleanimg.shape)
+            img = self.nimg
+        patches = extract_patches(img,self.patch_size)
+
+        tic()
+        outpatches = []
+        self.rec_means,self.rec_coefs = self.dictionary.encode_patches(patches,sparsity)
+        rec_patches = self.dictionary.reconstruct_patches(self.rec_coefs,self.rec_means)
+
+        #reconstructed_patches = [p.reshape(patch_size) for p in rec_matrix.transpose()]
+        self.reconstructed_img = assemble_patches(rec_patches,img.shape)
+        self.reconstruction_time = toc(self.debug)
+        if clip:
+            self.reconstructed_img = clip(reconstructed)
+        return(self.reconstructed_img)        
+
+        
+    def _extract_patches(self):
+        images = []
+        for f in self.file_paths:
+            cleanimg = np_or_img_to_array(f,self.patch_size)
+            if self.noisevar == 0:
+                img = cleanimg
             else:
-                self.idstr = parent.idstr + '1'
-        self.children = None
-        #self.samples_idx = None
-        self.samples_idx = np.array(samples_idx) #indexes of d.samples_idx where d is an ocdict
-        self.nsamples= len(self.samples_idx)
-        self.representative_patch = representative_patch
-        #if samples_idx is not None:
-        #    self.samples_idx = tuple(samples_idx) #indexes of d.samples_idx where d is an ocdict
-        #    self.nsamples= len(self.samples_idx)
+                img = cleanimg + np.random.normal(0,self.noisevar,cleanimg.shape)
+            images.append(img)
+        patches = []
+        for i in images:
+            patches += [p for p in extract_patches(i,self.patch_size)]
+        #patches = np.array(patches)
+        if self.npatches is not None:
+            patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:self.npatches]
+        if self.debug:
+            print('Extracted %d patches' % len(patches))
+        self.training_images = images
+        self.patches = patches
 
-    #def samples_list(self,ocdict):
-    #    return([ocdict.samples[i] for i in self.samples_idx])
+    def _transform_patches(self,twodpca_l,twodpca_r,wav_lev,wavelet):
+        if self.learning_transform == '2dpca':
+            self.transform_instance = twodpca_transform(self.patches,twodpca_l,twodpca_r)
+        elif self.learning_transform == 'wavelet':
+            self.transform_instance = wavelet_transform(self.patches,wav_lev,wavelet)
+        elif self.learning_transform == 'wavelet_packet':
+            self.transform_instance = wavelet_packet(self.patches,wavelet)
+        elif self.learning_transform is None:
+            self.transform_instance = dummy_transform(self.patches)
+        self.data_to_cluster = self.transform_instance.transform() #tuple of transformed patches
 
+    def _train_dict(self,dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity,dicttype):
+        if self.learning_method == 'haar-dict':
+            self.dictionary = hierarchical_dict(self.data_to_cluster)
+            self.dictionary.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
+        elif self.learning_method == 'ksvd':
+            self.dictionary = ksvd_dict(self.data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
+            self.dictionary.compute()
+        elif self.learning_method == 'simple-kmeans':
+            self.dictionary = simple_clustering_dict(self.data_to_cluster,'Kmeans')
+            self.dictionary.compute(dictsize)
+        elif self.learning_method == 'simple-kmaxoids':
+            self.dictionary = simple_clustering_dict(self.data_to_cluster,'Kmaxoids')
+            self.dictionary.compute(dictsize)
+        elif self.learning_method == 'warmstart':
+            tempdict = hierarchical_dict(self.data_to_cluster)
+            tempdict.compute(clustering,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
+            self.dictionary = ksvd_dict(self.data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity,warmstart=tempdict)
+            self.dictionary.compute()
+        if self.learning_method == 'haar-dict':
+            self.dictionary.haar_dictelements = self.transform_instance.reverse(self.dictionary.haar_dictelements)
+            self.dictionary.centroid_dictelements = self.transform_instance.reverse(self.dictionary.centroid_dictelements)
+            self.dictionary.set_dicttype(dicttype)
+        else:
+            self.dictionary.dictelements = self.transform_instance.reverse(self.dictionary.dictelements)
+            self.dictionary._dictelements_to_matrix()
+
+
+    def show_rec_img(self):
+        plt.imshow(self.reconstructed_img,cmap=plt.cm.gray)
+        plt.show()
+
+    def print_results(self):
+        if self.reconstructed_img is None:
+            raise Exception("No reconstructed image found")
+        desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
+        desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nLearning method: %s\nCoding sparsity: %d\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
+            (self.file_paths,self.codeimg,self.patch_size,len(self.dictionary.patches),self.learning_method,self.rec_sparsity,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
+        if self.learning_transform is not None:
+            desc_string += '\nLearning transform: %s' % (learn_transf)
+            if self.learning_transform in ['wavelet','wavelet_packet']:
+                desc_string += ' - %s' % self.transform_instance.wavelet
+            if learn_transf is '2dpca':
+                desc_string += ' - l = %d, r = %d' % (self.transform_instance.l,self.transform_instance.r)
+        if self.noisevar is not 0:
+            desc_string += '\nNoise variance: %f' % self.noisevar
+        if self.learning_method == 'haar-dict':
+            if self.dictionary.visit == 'fifo':
+                desc_string += '\nTree visit type: FIFO\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (self.dictionary.clustering_method,self.dictionary.clust_epsilon,self.dictionary.tree_depth,self.dictionary.tree_sparsity)
+            else:
+                desc_string += '\nTree visit type: Priority Queue\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (self.dictionary.clustering_method,self.dictionary.tree_depth,self.dictionary.tree_sparsity)
+            if self.dictionary.clustering_method == 'spectral':
+                desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (spectral_similarity,dictionary.clustering.affinity_matrix_nonzero_perc)
+        print(desc_string)
+
+        
 class Transform(Saveable):
     """Transform for 2D data. Input: list of patches"""
     def __init__(self,patch_list):
@@ -728,6 +765,33 @@ class Cluster(Saveable):
         else:
             plt.savefig(savefile)
         
+    
+class Node():
+    def __init__(self,samples_idx,parent,isleftchild=True,representative_patch=None):
+        self.parent = parent
+        if parent is None:
+            self.depth = 0
+            self.idstr = ''
+        else:
+            self.depth = self.parent.depth + 1
+            if isleftchild:
+                self.idstr = parent.idstr + '0'
+            else:
+                self.idstr = parent.idstr + '1'
+        self.children = None
+        #self.samples_idx = None
+        self.samples_idx = np.array(samples_idx) #indexes of d.samples_idx where d is an ocdict
+        self.nsamples= len(self.samples_idx)
+        self.representative_patch = representative_patch
+        #if samples_idx is not None:
+        #    self.samples_idx = tuple(samples_idx) #indexes of d.samples_idx where d is an ocdict
+        #    self.nsamples= len(self.samples_idx)
+
+    #def samples_list(self,ocdict):
+    #    return([ocdict.samples[i] for i in self.samples_idx])
+
+
+
 class Oc_Dict(Saveable):
     """Dictionary"""
 
@@ -1238,6 +1302,7 @@ class hierarchical_dict(Oc_Dict):
                 spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5):
         if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
+        self.clustering_method = clustering_method
         if clustering_method == 'twomeans':
             self.clustering = twomeans_clustering(self.patches)
         elif clustering_method == 'twomaxoids':
