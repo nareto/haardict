@@ -541,7 +541,10 @@ class Test(Saveable):
         tic()
         self._transform_patches(twodpca_l,twodpca_r,wav_lev,wavelet)
         if self.debug:
-            print('Training dictionary')
+            pstr = 'Training dictionary on %d x %d patches with: %s' % (self.patch_size[0],self.patch_size[1],method)
+            if method in ['haar-dict', 'centroids-dict']:
+                pstr += ' - %s' % clustering
+            print(pstr)
         self._train_dict(dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity)
         self.learning_time = toc(self.debug)
 
@@ -684,8 +687,7 @@ class Test(Saveable):
         
         if self.reconstructed_img is None:
             raise Exception("No reconstructed image found")
-        desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
-        desc_string += '\nTest id: %s' % self.test_id
+        desc_string = '\n'+10*'-'+'Test results -- ' + self.test_id+10*'-'
         desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nOverlapped patches: %s\nN. of patches: %d\nDictionary cardinality: %d\nCoding sparsity:%d \nLearning method: %s\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
             (self.file_paths,self.codeimg_path,self.patch_size,self.overlapped_patches,self.dictionary.npatches,self.dictionary.dictsize,self.rec_sparsity,self.learning_method,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
         if self.learning_transform is not None:
