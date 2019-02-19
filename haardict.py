@@ -19,6 +19,8 @@ import ipdb
 import itertools
 import pickle
 import os
+import matplotlib as mpl
+mpl.rc('image', cmap='gray')
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -112,6 +114,10 @@ def clip(img):
 
 def sumsupto(k):
     return(k*(k+1)/2)
+
+def orgmode_table_line(strings_or_n):
+    out ='| ' + ' | '.join([str(s) for s in strings_or_n]) + ' |'
+    return(out)
 
 def matrix2patches(matrix,shape=None):
     """Returns list of arrays obtained from columns of matrix"""
@@ -686,8 +692,90 @@ class Test(Saveable):
         desc_string += '\nReconstruction PSNR: %f\nReconstruction HaarPSI: %f\nEncoding + dictionary storage cost (%d bits): %f\nHaarPSI/storage cost: %f' % (self.reconstructed_psnr,self.reconstructed_haarpsi,self.encoding_bits,self.storage_cost,self.qindex)
         print(desc_string)
 
-    def print_and_save_orgmode(self,tag=None,simhist=False):
-        pass
+    def print_and_save_orgmode(self,save_prefix,tag=None,simhist=False,saveimgs=False):
+        print('\n'+'-'*16+'orgmode output'+'-'*16)
+        if tag is None:
+            tag = self.test_id
+            #tag = ''
+        base_save_name = save_prefix + '%s-%s' % (tag,self.learning_method)
+        base_save_name += '-%dx%d' % self.patch_size
+        if self.learning_method in ['haar-dict','centroids-dict']:
+            clust = self.dictionary.clustering_method
+            base_save_name += '-'+ clust
+            if clust == 'spectral':
+                base_save_name += '-' + self.dictionary.clustering.similarity_measure
+
+        tag = 'testid:' + tag
+        if simhist:
+            nb = int(len(self.dictionary.patches)/5)
+            plt.hist(self.dictionary.clustering.affinity_matrix.data,bins=nb)
+            simhistpath = base_save_name+'-similarities.png'
+            if saveimgs:
+                plt.savefig(simhistpath)
+            plt.close()
+            orgmode_str= '**** similarity histograms\n[[file:%s]]\n' % (simhistpath)
+            print(orgmode_str)
+        if self.noisevar > 0:
+            nimg = base_save_name+'-noisy_image.png'
+            plt.imshow(self.noisy_codeimg)
+            if saveimgs:
+                plt.savefig(nimg)
+            plt.close()
+            orgmode_str = '\n**** %s noisy image\n[[file:%s]]\n' % (tag, nimg)
+            print(orgmode_str)
+        recimg = base_save_name+'-reconstructed_image.png'
+        plt.imshow(self.reconstructed_img)
+        if saveimgs:
+            plt.savefig(recimg)
+        plt.close()
+        orgmode_str = '\n**** %s reconstructed image\n[[file:%s]]\n' % (tag,recimg)
+        print(orgmode_str)
+        dictelements = base_save_name+'-showdict.png'
+        orgmode_str = '**** %s showdict\n[[file:%s]]\n' % (tag,dictelements)
+        if saveimgs:
+            self.dictionary.show_dict_patches(savefile=dictelements)
+        print(orgmode_str)
+        plt.close()
+
+        mostused = min(self.dictionary.dictsize,50)
+        mostusedatoms = base_save_name+'-mostused.png'
+        orgmode_str = '**** %s %d most used atoms\n[[file:%s]]' % (tag,mostused,mostusedatoms)
+        if saveimgs:
+            self.dictionary.show_most_used_atoms(self.rec_coefs,mostused,savefile=mostusedatoms)
+        print(orgmode_str)
+        plt.close()
+
+        atomsprob1 = base_save_name+'-atoms_prob.png'
+        orgmode_str = '**** %s atoms prob\n[[file:%s]]\n' % (tag, atomsprob1)
+        atomsprob2 = base_save_name+'-atoms_prob-sorted.png'
+        orgmode_str += '[[file:%s]]'% (atomsprob2)
+        pr = atoms_prob(self.rec_coefs)
+        plt.plot(pr)
+        if saveimgs:
+            plt.savefig(atomsprob1)
+        plt.close()
+        pr.sort()
+        pr = pr[::-1]
+        plt.plot(pr)
+        if saveimgs:
+            plt.savefig(atomsprob2)
+        plt.close()
+        print(orgmode_str)
+
+        if self.dictionary.npatches is not None and self.dictionary.npatches < 100:
+            orgmode_str= '**** %s min sim histograms\n' % tag
+            print(orgmode_str)
+            for sim in ['frobenius','haarpsi','emd']:
+                fig = plt.figure()
+                self.dictionary.max_similarities(sim,False)
+                plt.hist(self.dictionary.max_sim)
+                simhist = base_save_name+'-maxsim_%s'%(sim)+'.png'
+                orgmode_str = '[[file:%s]]' % simhist
+                if saveimgs:
+                    fig.savefig(simhist)
+                fig.clear()
+                plt.close()
+                print(orgmode_str)    
         
 class Transform(Saveable):
     """Transform for 2D data. Input: list of patches"""
