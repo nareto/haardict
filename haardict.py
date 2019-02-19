@@ -30,7 +30,6 @@ import skimage.io
 import skimage.color
 from skimage.filters import threshold_otsu
 import scipy.sparse
-#from scipy.spatial.distance import pdist
 import pyemd
 from sklearn.linear_model import OrthogonalMatchingPursuit
 from sklearn.cluster import KMeans
@@ -38,6 +37,8 @@ from kmaxoids import KMaxoids
 from sklearn.cluster import SpectralClustering
 from sklearn.cluster import ward_tree
 from sklearn.neighbors import kneighbors_graph
+from sklearn.feature_extraction.image import extract_patches_2d as extract_patches_w_overlap
+from sklearn.feature_extraction.image import reconstruct_from_patches_2d as assemble_patches_w_overlap
 import oct2py
 import gc
 import queue
@@ -357,8 +358,8 @@ def positional_string(encoding):
     return(out)
 
 
-def extract_patches(array,size=(8,8)):
-    """Returns list of small arrays partitioning the large 2D input array. It's the inverse operation of assemble_patches"""
+def extract_patches_wo_overlap(array,size=(8,8)):
+    """Returns list of small arrays partitioning the large 2D input array. It's the inverse operation of assemble_patches_wo_overlap"""
     
     ret = []
     height,width = array.shape
@@ -369,7 +370,7 @@ def extract_patches(array,size=(8,8)):
             ret.append(subimg)
     return(ret)
 
-def assemble_patches(patches,out_size):
+def assemble_patches_wo_overlap(patches,out_size):
     """Returns a large 2D array given by row-stacking the arrays in patches, which should be a list. It's the inverse operation of extract_patches"""
     
     height,width = out_size
@@ -396,9 +397,6 @@ def low_rank_approx(svdtuple=None, A=None, r=1):
         ret += s[i] * np.outer(u.T[i], v[i])
     return(ret)
 
-#def affinity_matrix2(samples,similarity_measure,threshold):
-#    X = patches2matrix(samples).T
-#    return(pdist(X,similarity_measure))
 
 def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
     """Returns column-sparse representation of matrix of pairwise similarities, keeping only the pairwise similarities that are below the given threshold"""
@@ -487,7 +485,7 @@ class Saveable():
 class Test(Saveable):
     """Class to test the various dictionaries proposed in the paper for image reconstruction tasks"""
 
-    def __init__(self,file_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None):
+    def __init__(self,file_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True):
         """
         file_paths: path of image or list of paths of images to extract patches from
         npatches: number of patches to use. If None then all patches will be used for training
@@ -503,11 +501,12 @@ class Test(Saveable):
         self.debug = False
         self.dictionary = None
         self.reconstructed_img = None
+        self.overlapped_patches = overlapped_patches
         if test_id is None:
             now = dt.datetime.now()
             test_id = '-'.join(map(str,[now.year,now.month,now.day])) + '_'+':'.join(map(str,[now.hour,now.minute,now.second]))
         self.test_id = test_id
-        self._extract_patches()
+        self._extract_patches_from_training_imgs()
 
     def learn_dict(self,method='haar-dict',dictsize=None,clustering='twomeans',cluster_epsilon=None,spectral_similarity='frobenius',simmeasure_beta=0.5,affinity_matrix_threshold=0.5,ksvdsparsity=None,transform=None,twodpca_l=4,twodpca_r=4,wav_lev=1,wavelet='haar'):
         """
@@ -541,6 +540,8 @@ class Test(Saveable):
         self.learning_transform = transform
         tic()
         self._transform_patches(twodpca_l,twodpca_r,wav_lev,wavelet)
+        if self.debug:
+            print('Training dictionary')
         self._train_dict(dictsize,clustering,cluster_epsilon,spectral_similarity,simmeasure_beta,affinity_matrix_threshold,ksvdsparsity)
         self.learning_time = toc(self.debug)
 
@@ -562,7 +563,12 @@ class Test(Saveable):
         else:
             self.noisy_codeimg = self.codeimg + np.random.normal(0,self.noisevar,self.codeimg.shape)
             img = self.noisy_codeimg
-        patches = extract_patches(img,self.patch_size)
+        if self.overlapped_patches:
+            patches_marray = extract_patches_w_overlap(img,self.patch_size,random_state=None)
+            patches = [patches_marray[k,:,:] for k in range(patches_marray.shape[0])]
+
+        else:
+            patches = extract_patches_wo_overlap(img,self.patch_size)
 
         tic()
         outpatches = []
@@ -570,7 +576,10 @@ class Test(Saveable):
         rec_patches = self.dictionary.reconstruct_patches(self.rec_coefs,self.rec_means)
 
         #reconstructed_patches = [p.reshape(patch_size) for p in rec_matrix.transpose()]
-        self.reconstructed_img = assemble_patches(rec_patches,img.shape)
+        if self.overlapped_patches:
+            self.reconstructed_img = assemble_patches_w_overlap(np.stack(rec_patches,0),img.shape)
+        else:
+            self.reconstructed_img = assemble_patches_wo_overlap(rec_patches,img.shape)
         self.reconstruction_time = toc(self.debug)
         if clip:
             self.reconstructed_img = clip(reconstructed)
@@ -578,10 +587,13 @@ class Test(Saveable):
         return(self.reconstructed_img)        
 
 
-    def _extract_patches(self):
+    def _extract_patches_from_training_imgs(self):
         images = []
         for f in self.file_paths:
-            cleanimg = np_or_img_to_array(f,self.patch_size)
+            if self.overlapped_patches:
+                cleanimg = np_or_img_to_array(f)
+            else:
+                cleanimg = np_or_img_to_array(f,self.patch_size)                
             if self.noisevar == 0:
                 img = cleanimg
             else:
@@ -589,10 +601,14 @@ class Test(Saveable):
             images.append(img)
         patches = []
         for i in images:
-            patches += [p for p in extract_patches(i,self.patch_size)]
-        #patches = np.array(patches)
-        if self.npatches is not None:
-            patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:self.npatches]
+            if self.overlapped_patches:
+                patches_marray = extract_patches_w_overlap(i,self.patch_size,max_patches=self.npatches,random_state=None)
+                patches += [patches_marray[k,:,:] for k in range(patches_marray.shape[0])]
+            else:
+                patches += [p for p in extract_patches_wo_overlap(i,self.patch_size)]
+                #patches = np.array(patches)
+                if self.npatches is not None:
+                    patches = [patches[i] for i in np.random.permutation(range(len(patches)))][:self.npatches]
         if self.debug:
             print('Extracted %d patches' % len(patches))
         self.training_images = images
@@ -670,8 +686,8 @@ class Test(Saveable):
             raise Exception("No reconstructed image found")
         desc_string = '\n'+10*'-'+'Test results -- '+str(dt.datetime.now())+10*'-'
         desc_string += '\nTest id: %s' % self.test_id
-        desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nN. of patches: %d\nDictionary cardinality: %d\nCoding sparsity:%d \nLearning method: %s\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
-            (self.file_paths,self.codeimg_path,self.patch_size,len(self.dictionary.patches),self.dictionary.dictsize,self.rec_sparsity,self.learning_method,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
+        desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nOverlapped patches: %s\nN. of patches: %d\nDictionary cardinality: %d\nCoding sparsity:%d \nLearning method: %s\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
+            (self.file_paths,self.codeimg_path,self.patch_size,self.overlapped_patches,self.dictionary.npatches,self.dictionary.dictsize,self.rec_sparsity,self.learning_method,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
         if self.learning_transform is not None:
             desc_string += '\nLearning transform: %s' % (learn_transf)
             if self.learning_transform in ['wavelet','wavelet_packet']:
