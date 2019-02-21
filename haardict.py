@@ -484,7 +484,7 @@ class Saveable():
 class Test(Saveable):
     """Class to test the various dictionaries proposed in the paper for image reconstruction tasks"""
 
-    def __init__(self,learnimgs_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True):
+    def __init__(self,learnimgs_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True,ksvd_sparsity=None):
         """
         file_paths: path of image or list of paths of images to extract patches from
         npatches: number of patches to use. If None then all patches will be used for training
@@ -502,6 +502,7 @@ class Test(Saveable):
         self.reconstructed_img = None
         self.test_results =None
         self.overlapped_patches = overlapped_patches
+        self.ksvd_sparsity = ksvd_sparsity
         if test_id is None:
             now = dt.datetime.now()
             test_id = '-'.join(map(str,[now.year,now.month,now.day])) + '_'+':'.join(map(str,[now.hour,now.minute,now.second]))
@@ -634,6 +635,7 @@ class Test(Saveable):
             self.dictionary.compute(clustering,self.learning_method,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
         elif self.learning_method == 'ksvd':
             self.dictionary = ksvd_dict(self.data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
+            self.dictionary.sparsity = self.ksvd_sparsity
             self.dictionary.compute()
         elif self.learning_method == 'simple-kmeans':
             self.dictionary = simple_clustering_dict(self.data_to_cluster,'Kmeans')
