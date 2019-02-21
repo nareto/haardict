@@ -11,17 +11,18 @@ def run_and_save(fpath = None):
     """
     Run batch tests. Returns list of Test instances and DatFrame with test results. If fpath is set pickles of these are saved. 
     """
-    #learnimgs = 'img/flowers_pool-rescale.npy'
-    learnimgs = 'img/boat512.png'
+    learnimgs = 'img/flowers_pool-rescale.npy'
+    #learnimgs = 'img/boat512.png'
     #learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
 
     #codeimg = 'img/landscape2-rescaled.jpg'
-    #codeimg = 'img/flowers_pool-rescale.npy'
-    codeimg = 'img/cameraman256.png'
+    codeimg = 'img/flowers_pool-rescale.npy'
+    #codeimg = 'img/cameraman256.png'
 
     #patch_sizes_npatches_dictsize = [((8,8),15000),((12,12),10000),((16,16),8000),((24,24),4000),((32,32),1500)]
     #patch_sizes_npatches = [((8,8),150),((12,12),100)]
     #patch_sizes_npatches = [((32,32),int(2e4))]
+    #patch_sizes_npatches = [((8,8),int(2550))]
     npatches = np.arange(150,2e4,600).astype('int')
     patch_sizes_npatches = [((8,8),k) for k in npatches]
     patch_sizes_npatches += [((16,16),k) for k in npatches]
@@ -51,6 +52,7 @@ def run_and_save(fpath = None):
                 cur_test.reconstruct(codeimg,spars)
                 #tests_saveable.testlist.append(cur_test)
                 cur_test._compute_test_results()
+                cur_test.print_results()
                 df_saveable.df = df_saveable.df.append(cur_test.test_results,ignore_index=True)
                 if fpath is not None:
                     #tests_saveable.save_pickle(dict_fpath)
@@ -58,6 +60,7 @@ def run_and_save(fpath = None):
                 newtests += 1
             else:
                 for clust in ['twomeans','twomaxoids']:
+                #for clust in ['twomaxoids']:
                     cur_test = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
                     cur_test.debug = True
                     cur_test.learn_dict(method=meth, dictsize=dsize, clustering=clust)
@@ -65,6 +68,7 @@ def run_and_save(fpath = None):
                     cur_test.reconstruct(codeimg,spars)
                     #tests_saveable.testlist.append(cur_test)
                     cur_test._compute_test_results()
+                    cur_test.print_results()
                     df_saveable.df = df_saveable.df.append(cur_test.test_results,ignore_index=True)
                     if fpath is not None:
                         #tests_saveable.save_pickle(dict_fpath)
@@ -98,8 +102,8 @@ def plot1(df, psize):
             lab += '-'+clust
             if clust == 'spectral':
                 lab += '-'+cur_df.iloc[0]['similarity_measure']
-        #cur_df.set_index('n.patches')['haarpsi'].plot(label=lab,style='x--')
-        cur_df.set_index('n.patches')['learning_time'].plot(label=lab,style='x--')
+        cur_df.set_index('n.patches')['haarpsi'].plot(label=lab,style='x--')
+        #cur_df.set_index('n.patches')['learning_time'].plot(label=lab,style='x--')
     plt.legend(loc='best')
     plt.show()
             

@@ -46,7 +46,8 @@ class KMaxoids():
             #Update Clusters
             D = np.hstack([np.sum((Y-m)**2,axis=1).reshape(self.nsamples,1) for m in maxoids.transpose()])
             labels = np.argmin(D,axis=1)
-            
+            if np.var(labels) == 0:
+                break
             #update maxoids
             for k in range(self.K):
                 Mk = np.hstack([maxoids[:,0:k],maxoids[:,k+1:]]).transpose()
