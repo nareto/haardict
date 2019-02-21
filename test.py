@@ -23,18 +23,18 @@ npatches = 110
 #save_prefix = 'jimg/'+date+'-'+testid
 
 
-hd = Test(learnimgs,npatches,patch_size,noisevar=0,overlapped_patches=True)
-hd.learn_dict(method='haar-dict', dictsize=6, clustering='twomaxoids')
-#hd.overlapped_patches = False
-hd.reconstruct(codeimg,5)
-#hd.show_rec_img()
-hd.print_results()
+t = Test(learnimgs,npatches,patch_size,noisevar=0.3,overlapped_patches=False)
+t.learn_dict(method='haar-dict', dictsize=6, clustering='spectral')
+#t.overlapped_patches = False
+t.reconstruct(codeimg,5)
+#t.show_rec_img()
+t.print_results()
 #
-#hd.learn_dict(method='haar-dict', dictsize=6, clustering='twomeans')
-#hd.reconstruct(codeimg,5)
-##hd.show_rec_img()
-#hd.print_results()
-hd.print_and_save_orgmode('asdf/',simhist=False,saveimgs=True)
+#t.learn_dict(method='haar-dict', dictsize=6, clustering='twomeans')
+#t.reconstruct(codeimg,5)
+##t.show_rec_img()
+#t.print_results()
+#t.print_and_save_orgmode('asdf/',simhist=False,saveimgs=True)
 
 #ksvd = Test(learnimgs,npatches,patch_size)
 #ksvd.learn_dict(method='ksvd', dictsize=85)

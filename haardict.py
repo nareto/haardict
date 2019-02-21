@@ -17,8 +17,8 @@
 
 import ipdb
 import itertools
+from collections import OrderedDict
 import pickle
-import os
 import matplotlib as mpl
 mpl.rc('image', cmap='gray')
 import matplotlib.pyplot as plt
@@ -40,7 +40,6 @@ from sklearn.neighbors import kneighbors_graph
 from sklearn.feature_extraction.image import extract_patches_2d as extract_patches_w_overlap
 from sklearn.feature_extraction.image import reconstruct_from_patches_2d as assemble_patches_w_overlap
 import oct2py
-import gc
 import queue
 import pywt
 import datetime as dt
@@ -485,22 +484,23 @@ class Saveable():
 class Test(Saveable):
     """Class to test the various dictionaries proposed in the paper for image reconstruction tasks"""
 
-    def __init__(self,file_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True):
+    def __init__(self,learnimgs_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True):
         """
         file_paths: path of image or list of paths of images to extract patches from
         npatches: number of patches to use. If None then all patches will be used for training
         patch_size: size of patches to be extracted
         noisevar: variance of Gaussian noise to be added to input images
         """
-        if type(file_paths) != type([]):
-            file_paths = [file_paths]
-        self.file_paths = file_paths
+        if type(learnimgs_paths) != type([]):
+            learnimgs_paths = [learnimgs_paths]
+        self.learnimgs_paths = learnimgs_paths
         self.npatches =  npatches
         self.patch_size = patch_size
         self.noisevar = noisevar
         self.debug = False
         self.dictionary = None
         self.reconstructed_img = None
+        self.test_results =None
         self.overlapped_patches = overlapped_patches
         if test_id is None:
             now = dt.datetime.now()
@@ -592,7 +592,7 @@ class Test(Saveable):
 
     def _extract_patches_from_training_imgs(self):
         images = []
-        for f in self.file_paths:
+        for f in self.learnimgs_paths:
             if self.overlapped_patches:
                 cleanimg = np_or_img_to_array(f)
             else:
@@ -680,35 +680,69 @@ class Test(Saveable):
         plt.imshow(self.reconstructed_img,cmap=plt.cm.gray)
         plt.show()
 
+    def _compute_test_results(self):
+        if self.reconstructed_img is None:
+            raise Exception("No reconstructed image found")
+        params = OrderedDict()
+        params.update({
+            'learning_imgs': self.learnimgs_paths,
+            'code_img': self.codeimg_path,
+            'patch_size': self.patch_size,
+            'overlapped_patches': self.overlapped_patches,
+            'n.patches': self.npatches,
+            'dictionary_cardinality': self.dictionary.dictsize,
+            'learning_method': self.learning_method,
+            'transform_on_patches': self.learning_transform
+        })
+        if self.learning_transform == '2dpca':
+            params.update({
+                'twodpca_l': self.transform_instance.l,
+                'twodpca_r': serf.transform_instance.r
+            })
+        if self.noisevar is not 0:
+            params.update({
+                'noisevar': self.noisevar,
+                'noisy_img_psnr': self.noise_psnr,
+                'noisy_img_haarpsi': self.noise_haarpsi
+                })
+        if self.learning_method == 'ksvd':
+            params.update({
+                'ksvd_maxiter': self.dictionary.maxiter,
+                'ksvd_training_sparsity': self.dictionary.sparsity 
+                })
+        elif self.learning_method in ['haar-dict','centroids-dict']:
+            params.update({
+                'clustering': self.dictionary.clustering_method
+                })
+            if self.dictionary.clustering_method == 'spectral':
+                params.update({
+                    'similarity_measure': self.dictionary.clustering.similarity_measure,
+                    'affinity_matrix_sparsity': self.dictionary.clustering.affinity_matrix_nonzero_perc
+                })
+            params.update({
+                'tree_visit_type': self.dictionary.visit,
+                'tree_depth': self.dictionary.tree_depth,
+                'tree_sparsity': self.dictionary.tree_sparsity
+                })
+        params.update({
+            'reconstruction_sparsity': self.rec_sparsity,
+            'learning_time': self.learning_time,
+            'reconstruction_time': self.reconstruction_time,
+            'haarpsi': self.reconstructed_haarpsi,
+            'psnr': self.reconstructed_psnr
+        })
+        self.test_results = params
+        
     def print_results(self):
         """
         Prints all the parameters and results of the test
         """
-        
-        if self.reconstructed_img is None:
-            raise Exception("No reconstructed image found")
-        desc_string = '\n'+10*'-'+'Test results -- ' + self.test_id+10*'-'
-        desc_string += '\nLearn imgs: %s\nReconstruction img: %s\nPatch size: %s\nOverlapped patches: %s\nN. of patches: %d\nDictionary cardinality: %d\nCoding sparsity:%d \nLearning method: %s\nDictionary learning time: %4.2f\nReconstruction time: %4.2f\nTotal time: %4.2f' % \
-            (self.file_paths,self.codeimg_path,self.patch_size,self.overlapped_patches,self.dictionary.npatches,self.dictionary.dictsize,self.rec_sparsity,self.learning_method,self.learning_time,self.reconstruction_time,self.learning_time+self.reconstruction_time)
-        if self.learning_transform is not None:
-            desc_string += '\nLearning transform: %s' % (learn_transf)
-            if self.learning_transform in ['wavelet','wavelet_packet']:
-                desc_string += ' - %s' % self.transform_instance.wavelet
-            if learn_transf is '2dpca':
-                desc_string += ' - l = %d, r = %d' % (self.transform_instance.l,self.transform_instance.r)
-        if self.learning_method in ['haar-dict','centroids-dict']:
-            if self.dictionary.visit == 'fifo':
-                desc_string += '\nTree visit type: FIFO\nClustering method: %s \nCluster epsilon: %f\nTree depth: %d\nTree sparsity: %f' % (self.dictionary.clustering_method,self.dictionary.clust_epsilon,self.dictionary.tree_depth,self.dictionary.tree_sparsity)
-            else:
-                desc_string += '\nTree visit type: Priority Queue\nClustering method: %s \nTree depth: %d\nTree sparsity: %f' % (self.dictionary.clustering_method,self.dictionary.tree_depth,self.dictionary.tree_sparsity)
-            if self.dictionary.clustering_method == 'spectral':
-                desc_string += '\nSpectral similarity measure: %s\nAffinity matrix sparsity: %f' % (self.dictionary.clustering.similarity_measure,self.dictionary.clustering.affinity_matrix_nonzero_perc)
-
-        if self.noisevar is not 0:
-            desc_string += '\nNoise variance: %f\nNoisy PSNR: %f\nNoisy HaarPSI: %f' %\
-                (self.noisevar,self.noise_psnr,self.noise_haarpsi)
-        desc_string += '\nReconstruction PSNR: %f\nReconstruction HaarPSI: %f\nEncoding + dictionary storage cost (%d bits): %f\nHaarPSI/storage cost: %f' % (self.reconstructed_psnr,self.reconstructed_haarpsi,self.encoding_bits,self.storage_cost,self.qindex)
-        print(desc_string)
+        if self.test_results is None:
+            self._compute_test_results()
+        print('\n'+10*'-'+'Test results -- ' + self.test_id+10*'-')
+        for k,v in self.test_results.items():
+            #print(k+': ', v)
+            print('%-25s %-25s' % (k, v))
 
     def print_and_save_orgmode(self,save_prefix,tag=None,simhist=False,saveimgs=False):
         print('\n'+'-'*16+'orgmode output'+'-'*16)
@@ -1599,7 +1633,7 @@ class hierarchical_dict(Oc_Dict):
 class ksvd_dict(Oc_Dict):
     """Computes dictionary using KSVD method."""
     
-    def __init__(self,patch_list,dictsize,sparsity,maxiter=8,warmstart=None):
+    def __init__(self,patch_list,dictsize,sparsity,maxiter=10,warmstart=None):
         Oc_Dict.__init__(self,patch_list)
         self.npatches = len(patch_list)
         self.dictsize = dictsize
@@ -1625,7 +1659,7 @@ class ksvd_dict(Oc_Dict):
                  'L': self.sparsity,
                  'displayProgress': 1,
                  'errorFlag': 0,
-                 'numIteration': 10,
+                 'numIteration': self.maxiter,
                  'preserveDCAtom': 1}
         length = self.patches[0].flatten().shape[0]
         #Y = np.hstack([p.flatten().reshape(length,1) for p in self.patches])
