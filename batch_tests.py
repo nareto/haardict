@@ -38,72 +38,58 @@ def run_and_save(fpath = None):
     for i,psize_np in enumerate(patch_sizes_npatches):
         psize,npat = psize_np
         newtests = 0
-        cur_tests = []
         pdim = psize[0]*psize[1]
-        dsize = min(int(pdim*1.5),int(npat/2)) #dictionary 50% bigger than dimension
-        spars = min(int(pdim*0.05),int(npat/2)) #sparsity 5% of dimension
+        dsize = max(1,min(int(pdim*1.5),int(npat/2))) #dictionary 50% bigger than dimension
+        spars = max(1,min(int(pdim*0.01),int(npat/2))) #sparsity 1% of dimension
+        cur_tests = []
         for meth in ['ksvd', 'haar-dict','centroids-dict']:
         #for meth in ['haar-dict','centroids-dict']:
             if meth == 'ksvd':
-                cur_test = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap,ksvd_sparsity=spars)
-                cur_test.debug = True
-                cur_test.learn_dict(method=meth, dictsize=dsize)
-                cur_test.overlapped_patches = False
-                cur_test.reconstruct(codeimg,spars)
-                #tests_saveable.testlist.append(cur_test)
-                cur_test._compute_test_results()
-                cur_test.print_results()
-                df_saveable.df = df_saveable.df.append(cur_test.test_results,ignore_index=True)
+                ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
+                ct.debug = True
+                ct.learn_dict(method=meth, dictsize=dsize, ksvdsparsity=3*spars)
+                cur_tests.append(ct)
+            else:
+                cur_tests = []
+                for clust in ['twomeans','twomaxoids']:
+                #for clust in ['twomaxoids']:
+                    ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
+                    ct.debug = True
+                    ct.learn_dict(method=meth, dictsize=dsize, clustering=clust)
+                    cur_tests.append(ct)
+        for k in range(1,15):
+            for t in cur_tests:
+                t.overlapped_patches = False
+                t.reconstruct(codeimg,k*spars)
+                #tests_saveable.testlist.append(t)
+                t._compute_test_results()
+                t.print_results()
+                df_saveable.df = df_saveable.df.append(t.test_results,ignore_index=True)
                 if fpath is not None:
                     #tests_saveable.save_pickle(dict_fpath)
                     df_saveable.save_pickle(df_fpath)                    
                 newtests += 1
-            else:
-                for clust in ['twomeans','twomaxoids']:
-                #for clust in ['twomaxoids']:
-                    cur_test = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
-                    cur_test.debug = True
-                    cur_test.learn_dict(method=meth, dictsize=dsize, clustering=clust)
-                    cur_test.overlapped_patches = False
-                    cur_test.reconstruct(codeimg,spars)
-                    #tests_saveable.testlist.append(cur_test)
-                    cur_test._compute_test_results()
-                    cur_test.print_results()
-                    df_saveable.df = df_saveable.df.append(cur_test.test_results,ignore_index=True)
-                    if fpath is not None:
-                        #tests_saveable.save_pickle(dict_fpath)
-                        df_saveable.save_pickle(df_fpath)
-                    newtests += 1
+
             gc.collect()
-        #for k in range(newtests):
-        #    ct = tests_saveable.testlist[-k-1]
-        #    ct._compute_test_results()
-        #    df_saveable.df = df_saveable.df.append(ct.test_results,ignore_index=True)
-        #    if fpath is not None:
-        #        df_saveable.save_pickle(df_fpath)
     #return(tests_saveable.testlist,df_saveable.df)
     return(df_saveable.df)
-
-def print_test_results(pickled_tests):
-    tests = Saveable()
-    tests.load_pickle(pickled_tests)
-    for t in tests.testlist:
-        t.print_results()
 
 
 def plot1(df, psize):
     #toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering','similarity_measure'])]
     toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering'])]
-    #return(toplot)
     for cur_df in toplot:
+        cur_df = cur_df[cur_df['patch_size'] == psize]
         lab = cur_df.iloc[0]['learning_method']
         if lab in ['haar-dict','centroids-dict']:
             clust = cur_df.iloc[0]['clustering']
             lab += '-'+clust
             if clust == 'spectral':
                 lab += '-'+cur_df.iloc[0]['similarity_measure']
-        cur_df.set_index('n.patches')['haarpsi'].plot(label=lab,style='x--')
-        #cur_df.set_index('n.patches')['learning_time'].plot(label=lab,style='x--')
+        #series = cur_df.set_index('n.patches')['haarpsi']
+        series = cur_df.set_index('reconstruction_sparsity')['haarpsi']
+        #series = cur_df.set_index('n.patches')['learning_time']
+        series.plot(label=lab,style='x--')
     plt.legend(loc='best')
     plt.show()
             

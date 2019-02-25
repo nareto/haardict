@@ -484,7 +484,7 @@ class Saveable():
 class Test(Saveable):
     """Class to test the various dictionaries proposed in the paper for image reconstruction tasks"""
 
-    def __init__(self,learnimgs_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True,ksvd_sparsity=None):
+    def __init__(self,learnimgs_paths,npatches=None,patch_size=(8,8),noisevar=0,test_id=None,overlapped_patches=True):
         """
         file_paths: path of image or list of paths of images to extract patches from
         npatches: number of patches to use. If None then all patches will be used for training
@@ -502,7 +502,6 @@ class Test(Saveable):
         self.reconstructed_img = None
         self.test_results =None
         self.overlapped_patches = overlapped_patches
-        self.ksvd_sparsity = ksvd_sparsity
         if test_id is None:
             now = dt.datetime.now()
             test_id = '-'.join(map(str,[now.year,now.month,now.day])) + '_'+':'.join(map(str,[now.hour,now.minute,now.second]))
@@ -634,8 +633,9 @@ class Test(Saveable):
             self.dictionary = hierarchical_dict(self.data_to_cluster)
             self.dictionary.compute(clustering,self.learning_method,nbranchings=dictsize,epsilon=cluster_epsilon,spectral_sim_measure=spectral_similarity,simbeta=simmeasure_beta,affthreshold=affinity_matrix_threshold)
         elif self.learning_method == 'ksvd':
+            if ksvdsparsity is None:
+                raise Exception("KSVD sparsity should be explicitly set to an integer")
             self.dictionary = ksvd_dict(self.data_to_cluster,dictsize=dictsize,sparsity=ksvdsparsity)
-            self.dictionary.sparsity = self.ksvd_sparsity
             self.dictionary.compute()
         elif self.learning_method == 'simple-kmeans':
             self.dictionary = simple_clustering_dict(self.data_to_cluster,'Kmeans')
@@ -731,7 +731,8 @@ class Test(Saveable):
             'learning_time': self.learning_time,
             'reconstruction_time': self.reconstruction_time,
             'haarpsi': self.reconstructed_haarpsi,
-            'psnr': self.reconstructed_psnr
+            'psnr': self.reconstructed_psnr,
+            'storage cost in bits': self.storage_cost
         })
         self.test_results = params
         
@@ -739,8 +740,7 @@ class Test(Saveable):
         """
         Prints all the parameters and results of the test
         """
-        if self.test_results is None:
-            self._compute_test_results()
+        self._compute_test_results()
         print('\n'+10*'-'+'Test results -- ' + self.test_id+10*'-')
         for k,v in self.test_results.items():
             #print(k+': ', v)
@@ -1054,7 +1054,6 @@ class Oc_Dict(Saveable):
             means.append(mean)
         if isinstance(self,ksvd_dict) and self.useksvdencoding:
             print('\n\nUSING KSVD ENCODING\n\n\n')
-            #ipdb.set_trace()
             coefs = self.encoding
         else:
             #omp = OrthogonalMatchingPursuit(n_nonzero_coefs=sparsity,fit_intercept=True)
@@ -1646,14 +1645,16 @@ class ksvd_dict(Oc_Dict):
         #self.octave.addpath(implementation+'/')
         self.useksvdencoding = False
         self.warmstart = warmstart
-
+        if type(self.sparsity) != type(1):
+            raise Exception("KSVD training sparsity must be integer")
 
     def compute(self):
         self._ksvdbox()
         #self._ksvd()
+        self.matrix,self.matrix_normalization_coefficients = normalize_matrix(self.matrix)
 
     def _ksvd(self):
-        """ Requires KSVD.m file"""
+        """Requires KSVD.m file"""
         
         #from oct2py import octave
         param = {'InitializationMethod': 'DataElements',
