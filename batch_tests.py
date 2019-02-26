@@ -50,7 +50,6 @@ def run_and_save(fpath = None):
                 ct.learn_dict(method=meth, dictsize=dsize, ksvdsparsity=3*spars)
                 cur_tests.append(ct)
             else:
-                cur_tests = []
                 for clust in ['twomeans','twomaxoids']:
                 #for clust in ['twomaxoids']:
                     ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
@@ -75,23 +74,38 @@ def run_and_save(fpath = None):
     return(df_saveable.df)
 
 
-def plot1(df, psize):
+def plot1(df, psize,index='n.patches',reconstruction_sparsity=None,npatches=None):
     #toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering','similarity_measure'])]
     toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering'])]
     for cur_df in toplot:
         cur_df = cur_df[cur_df['patch_size'] == psize]
+        #if index != 'reconstruction_sparsity':
+        if index == 'n.patches':
+            if reconstruction_sparsity is None:
+                raise Exception('If not used as index, a reconstruction_sparsity should be explicitly set')
+            cur_df = cur_df[cur_df['reconstruction_sparsity'] == reconstruction_sparsity]
+        elif index == 'reconstruction_sparsity':
+            if npatches is None:
+                raise Exception('If not used as index, npatches should be explicitly set')
+            cur_df = cur_df[cur_df['n.patches'] == npatches]
         lab = cur_df.iloc[0]['learning_method']
         if lab in ['haar-dict','centroids-dict']:
             clust = cur_df.iloc[0]['clustering']
             lab += '-'+clust
             if clust == 'spectral':
                 lab += '-'+cur_df.iloc[0]['similarity_measure']
-        #series = cur_df.set_index('n.patches')['haarpsi']
-        series = cur_df.set_index('reconstruction_sparsity')['haarpsi']
-        #series = cur_df.set_index('n.patches')['learning_time']
-        series.plot(label=lab,style='x--')
+        quality = cur_df.set_index(index)['haarpsi']
+        time = cur_df.set_index(index)['learning_time']
+        plt.figure(1)
+        quality.plot(label=lab,style='x--')
+        plt.figure(2)
+        time.plot(label=lab,style='x--')
+    plt.legend(loc='best')
+    plt.figure(1)
     plt.legend(loc='best')
     plt.show()
+
+#series = cur_df.set_index('reconstruction_sparsity')['haarpsi']
             
 if __name__ == '__main__':
     run_and_save_pickle(sys.argv[1])
