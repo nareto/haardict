@@ -50,12 +50,19 @@ def run_and_save(fpath = None):
                 ct.learn_dict(method=meth, dictsize=dsize, ksvdsparsity=3*spars)
                 cur_tests.append(ct)
             else:
-                for clust in ['twomeans','twomaxoids']:
+                for clust in ['twomeans','twomaxoids','spectral']:
                 #for clust in ['twomaxoids']:
-                    ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
-                    ct.debug = True
-                    ct.learn_dict(method=meth, dictsize=dsize, clustering=clust)
-                    cur_tests.append(ct)
+                    if clust == 'spectral' and np < 800: #spectral clustering is slow
+                        for simm in ['frobenius','haarpsi','emd']:
+                            ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
+                            ct.debug = True
+                            ct.learn_dict(method=meth, dictsize=dsize, clustering=clust, similarity=simm)
+                            cur_tests.append(ct)
+                    else:
+                        ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
+                        ct.debug = True
+                        ct.learn_dict(method=meth, dictsize=dsize, clustering=clust)
+                        cur_tests.append(ct)
         for k in range(1,15):
             for t in cur_tests:
                 t.overlapped_patches = False
