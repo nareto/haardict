@@ -9,7 +9,7 @@ np.random.seed(123)
 
 def run_and_save(fpath = None):
     """
-    Run batch tests. Returns pandas DatFrame with test results. If fpath is set a pickle of this is saved. 
+    Run batch tests. Returns pandas DatFrame with test results and list of instances that was not possible to reconstruct (OMP is finnicky). If fpath is set a pickle of this is saved. 
     """
     learnimgs = 'img/flowers_pool-rescale.npy'
     #learnimgs = 'img/boat512.png'
@@ -25,14 +25,18 @@ def run_and_save(fpath = None):
     #patch_sizes_npatches = [((8,8),int(2550))]
     #npatches = np.arange(150,2e4,600).astype('int')
     #npatches = np.arange(50,1500,50).astype('int')
-    npatches = np.logspace(1,3.5,30).astype('int')
-    patch_sizes_npatches = [((4,4),k) for k in npatches]
-    patch_sizes_npatches += [((8,8),k) for k in npatches]
-    patch_sizes_npatches += [((16,16),k) for k in npatches]
-    patch_sizes_npatches += [((32,32),k) for k in npatches]
+    npatches4 = np.logspace(1.8,3.5,30).astype('int')
+    npatches8 = np.logspace(2,3.65,30).astype('int')
+    npatches16 = np.logspace(2.5,3.8,30).astype('int')
+    npatches32 = np.logspace(3.1,4,30).astype('int')
+    patch_sizes_npatches = [((4,4),k) for k in npatches4]
+    patch_sizes_npatches += [((8,8),k) for k in npatches8]
+    patch_sizes_npatches += [((16,16),k) for k in npatches16]
+    patch_sizes_npatches += [((32,32),k) for k in npatches32]
     overlap = True
     df_saveable = Saveable()
     df_saveable.df = pd.DataFrame()
+    errors = []
     if fpath is not None:
         now = dt.datetime.now()
         timestr = '-'.join(map(str,[now.year,now.month,now.day])) + '_'+':'.join(map(str,[now.hour,now.minute,now.second]))
@@ -45,6 +49,7 @@ def run_and_save(fpath = None):
         spars = max(1,min(int(pdim*0.01),int(npat/2))) #sparsity 1% of dimension
         cur_tests = []
         for meth in ['ksvd', 'haar-dict','centroids-dict']:
+        #for meth in ['haar-dict']:
             if meth == 'ksvd':
                 ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
                 ct.debug = True
@@ -52,6 +57,7 @@ def run_and_save(fpath = None):
                 cur_tests.append(ct)
             else:
                 for clust in ['twomeans','twomaxoids','spectral']:
+                #for clust in ['spectral']:
                     if clust == 'spectral' and npat < 800: #spectral clustering is slow
                         for simm in ['frobenius','haarpsi','emd']:
                             ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
@@ -68,16 +74,21 @@ def run_and_save(fpath = None):
                 continue
             for t in cur_tests:
                 t.overlapped_patches = False
-                t.reconstruct(codeimg,k*spars)
-                t._compute_test_results()
-                t.print_results()
-                df_saveable.df = df_saveable.df.append(t.test_results,ignore_index=True)
-                if fpath is not None:
-                    df_saveable.save_pickle(df_fpath)                    
-                newtests += 1
-
+                success = False
+                try:
+                    t.reconstruct(codeimg,k*spars)
+                    success = True
+                except:
+                    errors += [(psize,npat,t.learning_method)]
+                if success:
+                    t._compute_test_results()
+                    t.print_results()
+                    df_saveable.df = df_saveable.df.append(t.test_results,ignore_index=True)
+                    if fpath is not None:
+                        df_saveable.save_pickle(df_fpath)                    
+                    newtests += 1
             gc.collect()
-    return(df_saveable.df)
+    return(df_saveable.df,errors)
 
 
 def plot1(df,index='n.patches',psize=None,reconstruction_sparsity=None,npatches=None):
