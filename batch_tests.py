@@ -23,18 +23,23 @@ def run_and_save(fpath = None):
     #patch_sizes_npatches = [((8,8),150),((12,12),100)]
     #patch_sizes_npatches = [((32,32),int(2e4))]
     #patch_sizes_npatches = [((8,8),int(2550))]
-    npatches = np.arange(150,2e4,600).astype('int')
-    patch_sizes_npatches = [((8,8),k) for k in npatches]
+    #npatches = np.arange(150,2e4,600).astype('int')
+    #npatches = np.arange(50,1500,50).astype('int')
+    npatches = np.logspace(1,3.5,30).astype('int')
+    patch_sizes_npatches = [((4,4),k) for k in npatches]
+    patch_sizes_npatches += [((8,8),k) for k in npatches]
     patch_sizes_npatches += [((16,16),k) for k in npatches]
-    #patch_sizes_npatches += [((32,32),k) for k in npatches[::3]]
+    patch_sizes_npatches += [((32,32),k) for k in npatches]
     overlap = True
     df_saveable = Saveable()
     df_saveable.df = pd.DataFrame()
     #tests_saveable = Saveable()
     #tests_saveable.testlist = []
     if fpath is not None:
-        dict_fpath = fpath+'dicts.pickle'
-        df_fpath = fpath+'df.pickle'
+        now = dt.datetime.now()
+        timestr = '-'.join(map(str,[now.year,now.month,now.day])) + '_'+':'.join(map(str,[now.hour,now.minute,now.second]))
+        dict_fpath = '-'.join([fpath,timestr,'dicts.pickle'])
+        df_fpath = '-'.join([fpath,timestr,'df.pickle'])
     for i,psize_np in enumerate(patch_sizes_npatches):
         psize,npat = psize_np
         newtests = 0
@@ -43,7 +48,6 @@ def run_and_save(fpath = None):
         spars = max(1,min(int(pdim*0.01),int(npat/2))) #sparsity 1% of dimension
         cur_tests = []
         for meth in ['ksvd', 'haar-dict','centroids-dict']:
-        #for meth in ['haar-dict','centroids-dict']:
             if meth == 'ksvd':
                 ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
                 ct.debug = True
@@ -51,19 +55,20 @@ def run_and_save(fpath = None):
                 cur_tests.append(ct)
             else:
                 for clust in ['twomeans','twomaxoids','spectral']:
-                #for clust in ['twomaxoids']:
-                    if clust == 'spectral' and np < 800: #spectral clustering is slow
+                    if clust == 'spectral' and npat < 800: #spectral clustering is slow
                         for simm in ['frobenius','haarpsi','emd']:
                             ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
                             ct.debug = True
-                            ct.learn_dict(method=meth, dictsize=dsize, clustering=clust, similarity=simm)
+                            ct.learn_dict(method=meth, dictsize=dsize, clustering=clust, spectral_similarity=simm)
                             cur_tests.append(ct)
-                    else:
+                    elif clust != 'spectral':
                         ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
                         ct.debug = True
                         ct.learn_dict(method=meth, dictsize=dsize, clustering=clust)
                         cur_tests.append(ct)
         for k in range(1,15):
+            if k*spars > int(dsize/2):
+                continue
             for t in cur_tests:
                 t.overlapped_patches = False
                 t.reconstruct(codeimg,k*spars)
@@ -82,10 +87,11 @@ def run_and_save(fpath = None):
 
 
 def plot1(df, psize,index='n.patches',reconstruction_sparsity=None,npatches=None):
-    #toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering','similarity_measure'])]
-    toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering'])]
+    toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering','similarity_measure'])]
+    #toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering'])]
     for cur_df in toplot:
         cur_df = cur_df[cur_df['patch_size'] == psize]
+        #cur_df = cur_df[cur_df['clustering'] != 'spectral']
         #if index != 'reconstruction_sparsity':
         if index == 'n.patches':
             if reconstruction_sparsity is None:
@@ -108,8 +114,10 @@ def plot1(df, psize,index='n.patches',reconstruction_sparsity=None,npatches=None
         plt.figure(2)
         time.plot(label=lab,style='x--')
     plt.legend(loc='best')
+    plt.yscale('log')
     plt.figure(1)
     plt.legend(loc='best')
+    plt.yscale('linear')
     plt.show()
 
 #series = cur_df.set_index('reconstruction_sparsity')['haarpsi']

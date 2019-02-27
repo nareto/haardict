@@ -407,8 +407,9 @@ def affinity_matrix(samples,similarity_measure,threshold,symmetric=True):
     rows = []
     cols = []
     counter = 0
+    totcomps = sumsupto(nsamples-1)
     for i,j in itertools.combinations(range(nsamples),2):
-        print('\r%d/%d' % (counter + 1,sumsupto(nsamples-1)), sep=' ',end='',flush=True)
+        print('\r%d/%d' % (counter + 1, totcomps), sep=' ',end='',flush=True)
         d = similarity_measure(samples[i], samples[j])
         if d > threshold:
             data.append(d)
@@ -572,7 +573,7 @@ class Test(Saveable):
 
         else:
             patches = extract_patches_wo_overlap(img,self.patch_size)
-
+        self.codeimg_npatches = len(patches)
         tic()
         outpatches = []
         self.rec_means,self.rec_coefs = self.dictionary.encode_patches(patches,sparsity)
@@ -674,7 +675,7 @@ class Test(Saveable):
         """Returns the estimated storage cost of the D,X (dictionary,encoding) pair in bits"""
 
         self.encoding_bits = bits
-        K,N,n = self.dictionary.dictsize, self.dictionary.npatches, self.dictionary.atom_dim
+        K,N,n = self.dictionary.dictsize, self.codeimg_npatches, self.dictionary.atom_dim
         positional_entropy = entropy(positional_string(self.rec_coefs))
         self.storage_cost = K*n*bits + self.rec_sparsity*N*bits + N*K*positional_entropy
 
