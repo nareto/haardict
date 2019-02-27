@@ -1470,7 +1470,7 @@ class hierarchical_dict(Oc_Dict):
         Oc_Dict.__init__(self,patch_list)
         self.dicttype = 'haar'
 
-    def compute(self,clustering_method,dicttype='haar-dict',nbranchings=None,epsilon=None,minsamples=5,\
+    def compute(self,clustering_method,dicttype='haar-dict',nbranchings=None,epsilon=None,minsamples=2,\
                 spectral_sim_measure='frobenius',simbeta=0.06,affthreshold=0.5):
         if (nbranchings is None and epsilon is None) or (nbranchings is not None and epsilon is not None):
             raise Exception('Exactly one of nbranchings or epsilon has to be set')
