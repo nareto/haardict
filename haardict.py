@@ -1687,7 +1687,7 @@ class ksvd_dict(Oc_Dict):
         Y = patches2matrix(self.patches)
         if self.warmstart is None:
             params = {'data': Y.astype('double'),
-                      'Tdata': self.sparsity,
+                      'Tdata': np.double(self.sparsity),
                       'dictsize': self.dictsize,
                       #'iternum': 10,
                       'memusage': 'normal'} #'low','normal' or 'high'
@@ -1700,11 +1700,12 @@ class ksvd_dict(Oc_Dict):
 
         #[D,X] = self.octave.ksvd(params)
         print('Computing ksvd...')
-        [D,X] = self.octave.ksvd(params)
+        #[D,X] = self.octave.ksvd(params)
+        D = self.octave.ksvd(params)
         #[D,X] = octave.ksvd(params)
         print('Done...')
         #[D,X] = self.oc.eval('ksvdparams)
-        self.encoding = X.todense()
+        #self.encoding = X.todense()
         self.matrix = D
         self.dictelements = []
         rows,cols = self.patch_size

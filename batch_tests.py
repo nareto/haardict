@@ -98,11 +98,14 @@ def plot1(df,index='n.patches',psize=None,reconstruction_sparsity=None,npatches=
     df: the DataFrame
     index: the column to use as index. Tested with 'n.patches','patch_size' and 'reconstruction_sparsity'
     """
-    
+
     toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering','similarity_measure'])]
     #toplot = [v for k,v in df.fillna('NaN').groupby(['learning_method','clustering'])]
     for cur_df in toplot:
-        if cur_df.iloc[0]['clustering'] == 'spectral': #comment this to plot also dictionaries using spectral clustering
+        #if cur_df.iloc[0]['clustering'] == 'spectral': #comment this to plot also dictionaries using spectral clustering
+        #    continue
+        #if cur_df.iloc[0]['clustering'] != 'spectral' and cur_df.iloc[0]['clustering'] != 'twomeans':
+        if cur_df.iloc[0]['learning_method'] == 'centroids-dict': 
             continue
         if psize is not None:
             cur_df = cur_df[cur_df['patch_size'] == psize]
@@ -131,6 +134,13 @@ def plot1(df,index='n.patches',psize=None,reconstruction_sparsity=None,npatches=
                 lab += '-'+cur_df.iloc[0]['similarity_measure']
         quality = cur_df.set_index(index)['haarpsi']
         time = cur_df.set_index(index)['learning_time']
+        #following is used to later set ylim for plot
+        if set(cur_df['learning_method']) == set(['ksvd']):
+            maxy = cur_df['learning_time'].max()
+        #following is used to later set xlim for plot
+        if set(cur_df['clustering']) == set(['spectral']):
+            maxx = cur_df['n.patches'].max()
+            minx = cur_df['n.patches'].min()
         plt.figure(1)
         if index == 'patch_size':
             ticks = [str(k) for k in quality.index]
@@ -141,11 +151,14 @@ def plot1(df,index='n.patches',psize=None,reconstruction_sparsity=None,npatches=
             ticks = [str(k) for k in time.index]
             plt.xticks([0],ticks)
         time.plot(label=lab,style='x--')
-    plt.legend(loc='best')
-    #plt.yscale('log')
+    #plt.legend(loc='best')
+    plt.legend(loc='upper right')
+    plt.yscale('log')
+    #plt.ylim(0,maxtime*1.2)
+    plt.xlim(minx*0.9,maxx*1.2)
     plt.figure(1)
+    plt.xlim(minx*0.9,maxx*1.2)
     plt.legend(loc='best')
-    #plt.yscale('logit')
     plt.show()
 
             
