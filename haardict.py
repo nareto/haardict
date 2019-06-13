@@ -68,16 +68,16 @@ def toc(printstr=True):
 
 def np_or_img_to_array(path,crop_to_patchsize=None):
     if path[-3:].upper() in  ['JPG','GIF','PNG','EPS','BMP']:
-        ret = skimage.io.imread(path,as_gray=True).astype('float64')/255
+        ret = skimage.io.imread(path).astype('float64')/255
     elif path[-3:].upper() in  ['NPY']:
         ret = np.load(path)
     elif path[-4:].upper() == 'TIFF' or path[-3:].upper() == 'CR2':
         ret = read_raw_img(path)
     if crop_to_patchsize is not None:
         m,n = crop_to_patchsize
-        M,N = ret.shape
+        M,N = ret.shape[:2]
         ret = ret[:M-(M%m),:N-(N%n)]
-    return(ret)
+    return(np.array(ret))
 
 def read_raw_img(img,as_gray=True):
     import rawpy
@@ -361,7 +361,7 @@ def extract_patches_wo_overlap(array,size=(8,8)):
     """Returns list of small arrays partitioning the large 2D input array. It's the inverse operation of assemble_patches_wo_overlap"""
     
     ret = []
-    height,width = array.shape
+    height,width = array.shape[:2]
     vstep,hstep = size
     for j in range(0,width-hstep+1,hstep):
         for i in range(0,height-vstep+1,vstep):
@@ -372,10 +372,10 @@ def extract_patches_wo_overlap(array,size=(8,8)):
 def assemble_patches_wo_overlap(patches,out_size):
     """Returns a large 2D array given by row-stacking the arrays in patches, which should be a list. It's the inverse operation of extract_patches"""
     
-    height,width = out_size
+    height,width = out_size[:2]
     out = np.zeros(shape=out_size)
     idx = 0
-    vstep,hstep = patches[0].shape
+    vstep,hstep = patches[0].shape[:2]
     for j in range(0,width-hstep+1,hstep):
         for i in range(0,height-vstep+1,vstep):
             #j = np.random.randint(0,width-hstep+1)
@@ -442,7 +442,7 @@ def covariance_matrix(patches):
 
 
 
-def show_or_save_patches(patchlist,rows,cols,savefile=None):
+def show_or_save_patches(patchlist,rows,cols,savefile=None,rescale_patch=True):
     """Makes a plot of the patches in patchlist and either shows it or saves it to savefile"""
     fig, axis = plt.subplots(rows,cols)
     for idx,ax in np.ndenumerate(axis):
@@ -457,8 +457,11 @@ def show_or_save_patches(patchlist,rows,cols,savefile=None):
         if len(idx) == 1:
             i = 0
             j = idx[0]
+        cur_patch = patchlist[cols*i + j]
+        if rescale_patch:
+            cur_patch = rescale(cur_patch,True,newmin=0,newmax=1)
         ax.set_axis_off()
-        ax.imshow(patchlist[cols*i + j],interpolation='nearest')
+        ax.imshow(cur_patch,interpolation='nearest')
     #hacks to try and get nice subplots
     #plt.tight_layout(pad=0.1,h_pad=0.1,w_pad=0.1)
     #plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.1,hspace=0.1)
@@ -666,6 +669,8 @@ class Test(Saveable):
             n_psnr = '-'
         self.noise_haarpsi = n_hpi
         self.noise_psnr = n_psnr
+        #imga = np.array(self.codeimg)
+        #imgb = np.array(self.reconstructed_img)
         self.reconstructed_haarpsi = haar_psi(255*self.codeimg,255*self.reconstructed_img)[0]
         self.reconstructed_psnr = psnr(self.codeimg,self.reconstructed_img)
         self._storage_cost()
@@ -1081,7 +1086,7 @@ class Oc_Dict(Saveable):
         return(reconstructed)
 
     def reconstruct_patches(self,coefficients,means=None):
-        return(matrix2patches(self.reconstruct_samples(coefficients,means)))
+        return(matrix2patches(self.reconstruct_samples(coefficients,means), shape=self.patch_size))
     
     def encode_ompext(self,input_patch,sparsity,ompbox=True): #TODO: test method
         from oct2py import octave
@@ -1108,6 +1113,7 @@ class Oc_Dict(Saveable):
         return(coef,mean)
 
     def show_most_used_atoms(self,coefs,natoms = 100,savefile=None):
+        natoms = min(self.dictsize,natoms)
         if natoms < 15:
             rows,cols = (1,natoms)
         else:
@@ -1122,8 +1128,9 @@ class Oc_Dict(Saveable):
             
     def show_dict_patches(self,shape=None,patch_shape=None,savefile=None):
         if patch_shape is None:
-            s = int(np.sqrt(self.atom_dim))
-            patch_shape = (s,s)
+            #s = int(np.sqrt(self.atom_dim))
+            #patch_shape = (s,s)
+            patch_shape = self.patch_size
         if shape is None:
             l = int(np.sqrt(self.dictsize))
             shape = (min(10,l),min(10,l))
