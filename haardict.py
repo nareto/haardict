@@ -1715,7 +1715,7 @@ class ksvd_dict(Oc_Dict):
         #self.encoding = X.todense()
         self.matrix = D
         self.dictelements = []
-        rows,cols = self.patch_size
+        #rows,cols = self.patch_size[:2]
         for j in range(self.dictsize):
-            self.dictelements.append(D[:,j].reshape(rows,cols))
+            self.dictelements.append(D[:,j].reshape(self.patch_size))
 

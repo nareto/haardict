@@ -28,11 +28,12 @@ dictionary_cardinality = 30
 sparsity = 5
 t = Test(learnimgs,npatches,patch_size,noisevar=0,overlapped_patches=False)
 t.learn_dict(method='haar-dict', dictsize=dictionary_cardinality, clustering='twomeans')
+#t.learn_dict(method='ksvd', dictsize=dictionary_cardinality, ksvdsparsity=sparsity)
 #t.learn_dict(method='haar-dict', dictsize=dictionary_cardinality, clustering='spectral', spectral_similarity='haarpsi')
 #t.overlapped_patches = False
 t.reconstruct(codeimg,sparsity)
-t.dictionary.show_most_used_atoms(t.rec_coefs)
-#t.show_rec_img()
+#t.dictionary.show_most_used_atoms(t.rec_coefs)
+t.show_rec_img()
 t.print_results()
 
 
