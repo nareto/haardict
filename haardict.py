@@ -178,11 +178,12 @@ def simmeasure_frobenius(beta=0.06,samples=None):
         datavar = 1
     else:
         avg = sum(samples)/len(samples)
-        datavar = sum([np.linalg.norm(p-avg,ord='fro')**2 for p in samples])/len(samples)
-    ret = lambda patch1,patch2: np.exp(-beta*(np.linalg.norm(patch1 - patch2,ord='fro')**2)/datavar)
+        datavar = sum([np.linalg.norm(p-avg)**2 for p in samples])/len(samples)
+    ret = lambda patch1,patch2: np.exp(-beta*(np.linalg.norm(patch1 - patch2)**2)/datavar)
     return(ret)
 
 def simmeasure_emd(patch_size,beta=0.06,samples=None):
+    """Does not work with colored patches"""
     prows,pcols = patch_size
     histlength = prows*pcols
     metric_matrix = np.zeros((histlength,histlength))
@@ -967,8 +968,12 @@ class Node():
     #def samples_list(self,ocdict):
     #    return([ocdict.samples[i] for i in self.samples_idx])
 
+    def __gt__(self, other):
+        return self.depth > other.depth
 
-
+    def __lt__(self, other):
+        return other.depth > self.depth
+    
 class Oc_Dict(Saveable):
     """Dictionary"""
 
@@ -1540,7 +1545,7 @@ class hierarchical_dict(Oc_Dict):
                         dsize += 1
                     else:
                         lpriority = None
-                        rpriority = None
+                        rpriority = np.finfo(float).eps
                     if lpriority == rpriority:
                         rpriority += np.finfo(float).eps
                     lnode = Node(abs_lsamples,cur,True, lrepr)

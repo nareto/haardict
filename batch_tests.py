@@ -132,15 +132,16 @@ def run_and_save(fpath = None):
     """
     Run batch tests. Returns pandas DatFrame with test results and list of instances that was not possible to reconstruct (OMP is finnicky). If fpath is set a pickle of this is saved. 
     """
-    
+
     learnimgs = 'img/flowers_pool-rescale.npy'
     #learnimgs = 'img/boat512.png'
     #learnimgs = ['img/cameraman256.png','img/lena512.png','img/barbara512.png','img/peppers256.png']
 
     #codeimg = 'img/landscape2-rescaled.jpg'
-    codeimg = 'img/flowers_pool-rescale.npy'
+    #codeimg = 'img/flowers_pool-rescale.npy'
     #codeimg = 'img/cameraman256.png'
-
+    codeimg = learnimgs
+    
     #patch_sizes_npatches_dictsize = [((8,8),15000),((12,12),10000),((16,16),8000),((24,24),4000),((32,32),1500)]
     #patch_sizes_npatches = [((8,8),150),((12,12),100)]
     #patch_sizes_npatches = [((32,32),int(2e4))]
@@ -148,13 +149,14 @@ def run_and_save(fpath = None):
     #npatches = np.arange(150,2e4,600).astype('int')
     #npatches = np.arange(50,1500,50).astype('int')
     npatches4 = np.logspace(1.8,3.5,30).astype('int')
-    npatches8 = np.logspace(2,3.65,30).astype('int')
+    #npatches8 = np.logspace(2,3.65,30).astype('int')
+    npatches8 = np.logspace(2,3.65,15).astype('int')
     npatches16 = np.logspace(2.5,3.8,30).astype('int')
     npatches32 = np.logspace(3.1,4,30).astype('int')
-    patch_sizes_npatches = [((4,4),k) for k in npatches4]
-    patch_sizes_npatches += [((8,8),k) for k in npatches8]
-    patch_sizes_npatches += [((16,16),k) for k in npatches16]
-    patch_sizes_npatches += [((32,32),k) for k in npatches32]
+    #patch_sizes_npatches = [((4,4),k) for k in npatches4]
+    patch_sizes_npatches = [((8,8),k) for k in npatches8]
+    #patch_sizes_npatches += [((16,16),k) for k in npatches16]
+    #patch_sizes_npatches += [((32,32),k) for k in npatches32]
     overlap = True
     df_saveable = Saveable()
     df_saveable.df = pd.DataFrame()
@@ -181,7 +183,8 @@ def run_and_save(fpath = None):
                 for clust in ['twomeans','twomaxoids','spectral']:
                 #for clust in ['spectral']:
                     if clust == 'spectral' and npat < 800: #spectral clustering is slow
-                        for simm in ['frobenius','haarpsi','emd']:
+                        #for simm in ['frobenius','haarpsi','emd']:
+                        for simm in ['frobenius','haarpsi']:
                             ct = Test(learnimgs,npat,psize,noisevar=0,overlapped_patches=overlap)
                             ct.debug = True
                             ct.learn_dict(method=meth, dictsize=dsize, clustering=clust, spectral_similarity=simm)
