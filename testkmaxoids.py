@@ -1,20 +1,28 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from recursivetwomeans import RecursiveTwoMeans
 from kmaxoids import KMaxoids
 from sklearn.datasets.samples_generator import make_blobs
 from sklearn.cluster import KMeans
+import time
+
+class Timer(object):
+    def __init__(self, name=None):
+        self.name = name
+
+    def __enter__(self):
+        self.tstart = time.time()
+
+    def __exit__(self, type, value, traceback):
+        toprint = ''
+        if self.name:
+            toprint += f'[Timer: {self.name}] '
+        toprint += 'Elapsed: %s' % (time.time() - self.tstart)
+        print(toprint)
+            
 
 
-#X, y = make_blobs(n_samples=1000, centers=[(0,2),(20,2),(-5,-6)], n_features=2, random_state=0)
-# print(X.shape)
-# print(y)
-# X, y = make_blobs(n_samples=[3, 3, 4], centers=None, n_features=2, random_state=0)
-# print(X.shape)
-# print(y)
-
-#make_blobs(n_samples=100, n_features=2, centers=None, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=None)
-
-def make_gauss_blob(center,pca1,var1=2,var2=0.5,npoints=1000):
+def make_gauss_blob(center,pca1,var1=2,var2=0.5,npoints=500):
     points = []
     pca1 = np.array(pca1)
     center = np.array(center)
@@ -30,36 +38,37 @@ l = 4
 b1 = np.array(make_gauss_blob((l,l),(1,1)))
 b2 = np.array(make_gauss_blob((-l,l),(-1,1)))
 b3 = np.array(make_gauss_blob((0,-l),(0,-1)))
-#plt.scatter(b1[:,0],b1[:,1],color='red')
-#plt.scatter(b2[:,0],b2[:,1],color='blue')
-#plt.scatter(b3[:,0],b3[:,1],color='green')
-
 Y = np.vstack([b1,b2,b3])
 #each row is a data point
 
-fig,axes = plt.subplots(1,2)
-colors = ['red','green','blue']
+fig,axes = plt.subplots(1,3)
+colors = ['red','green','blue', 'yellow', 'purple', 'orange', 'pink']
 
 #KMeans
-tic()
-kmeans = KMeans(n_clusters=3).fit(Y)
-print('kmeans computed in %f seconds' % (toc(False)))
+with Timer('Kmeans'):
+    kmeans = KMeans(n_clusters=3).fit(Y)
 for p,coord in enumerate(Y):
     axes[0].scatter(coord[0],coord[1],color=colors[kmeans.labels_[p]])
-for p,c in enumerate(colors):
-    cent = kmeans.cluster_centers_[p]
+for cent in kmeans.cluster_centers_:
     axes[0].plot(cent[0],cent[1],'ok')
 
-#KMaxoids
-tic()
-kmaxoids = KMaxoids(Y.transpose(),3)
-maxoids, labels = kmaxoids.run()
-print('kmaxoids computed in %f seconds' % (toc(False)))
+#RecursiveTwoMeans
+with Timer('RecursiveTwoMeans'):
+    recursive2means = RecursiveTwoMeans(wcss_tol = 100, ncomponents=3).fit(Y,100)
 for p,coord in enumerate(Y):
-    axes[1].scatter(coord[0],coord[1],color=colors[labels[p]])
-for p,c in enumerate(colors):
-    cent = maxoids[:,p]
+    axes[1].scatter(coord[0],coord[1],color=colors[recursive2means.labels_[p] % len(colors)])
+for cent in recursive2means.cluster_centers_:
     axes[1].plot(cent[0],cent[1],'ok')
     
-#plt.scatter(X[:,0],X[:,1])
+#KMaxoids
+kmaxoids = KMaxoids(Y.transpose(),3)
+with Timer('KMaxoids'):
+    maxoids, labels = kmaxoids.run()
+for p,coord in enumerate(Y):
+    axes[2].scatter(coord[0],coord[1],color=colors[labels[p]])
+#for p,c in enumerate(colors):
+#    cent = maxoids[:,p]
+for cent in maxoids.T:
+    axes[2].plot(cent[0],cent[1],'ok')
+
 plt.show()

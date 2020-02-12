@@ -16,6 +16,7 @@
 #
 
 import ipdb
+import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.cluster import KMeans
 import queue
@@ -65,6 +66,7 @@ class RecursiveTwoMeans(BaseEstimator, TransformerMixin):
             self.visit = 'priority'
         else:
             self.visit = 'fifo'
+        self.leafs = []
 
     def _split_set(self, X, data_indexes):
         """Returns (idx1,idx2,lcentroid, rcentroid, wcss) where idx1 and idx2 are the indexes of the split with centroids lcentroid and rcentroid; wcss is the achieved value of the WCSS function.
@@ -79,35 +81,27 @@ class RecursiveTwoMeans(BaseEstimator, TransformerMixin):
         rsamples = (km.labels_ != 0).nonzero()[0]
         #scaledwcss = km.inertia_/(len(data_indexes*self.data_dim))
         wcss = km.inertia_
+        lcentroid = km.cluster_centers_[0,:]
+        rcentroid = km.cluster_centers_[1,:]
+        return(lsamples,rsamples,lcentroid,rcentroid,wcss)
 
-        lcentroid = None
-        rcentroid = None
-        #curpatches = self.samples[patch_indexes]
-        #if len(lsamples) > 0 and len(rsamples) > 0:
-        #    lcentroid = sum([curpatches[i] for i in lsamples[1:]],curpatches[lsamples[0]])
-        #    rcentroid = sum([curpatches[i] for i in rsamples[1:]],curpatches[rsamples[0]])
-        #    lcentroid /= len(lsamples)
-        #    rcentroid /= len(rsamples)
-        ipdb.set_trace() #find out centroids
-        return(lsamples,rsamples,lcentroid,rcentroid,dwcss)
-
-    def fit(self, X, minsamples = 2):
+    def fit(self, X, minsamples = 5):
         """Compute the clustering.
 
         minsamples: minimum number of samples to be in any to-be-split tree-node."""
         n_samples, n_features = X.shape
 
-        nclusters = 0
-        
+        nclusters = 1
+
         self.root_node = Node(tuple(np.arange(n_samples)),None)
         if self.visit == 'priority':
             tovisit = queue.PriorityQueue()
-            totvar = X.var(0)
+            totvar = X.var()
             tovisit.put((0,self.root_node))
         elif self.visit == 'fifo':
             tovisit = queue.Queue()
             tovisit.put((None,self.root_node))
-            
+        depth = 0 
         while not tovisit.empty():
             father_priority,cur = tovisit.get() #it always holds: father_priority = totwcss - wcss(cur)
             if cur.nsamples > minsamples and (self.visit != 'priority' or nclusters < self.ncomponents):
@@ -118,8 +112,8 @@ class RecursiveTwoMeans(BaseEstimator, TransformerMixin):
                     abs_lsamples = cur.samples_idx[curlsamples]
                     abs_rsamples = cur.samples_idx[currsamples]
                     if self.visit == 'priority':
-                        lvar = X[abs_lsamples,:].var(0)
-                        rvar = X[abs_rsamples,:].var(0)                        
+                        lvar = X[abs_lsamples,:].var()
+                        rvar = X[abs_rsamples,:].var()                        
                         lpriority = totvar - lvar
                         rpriority = totvar - rvar
                         nclusters += 1
@@ -138,6 +132,12 @@ class RecursiveTwoMeans(BaseEstimator, TransformerMixin):
                 self.leafs.append(cur)
         self.tree_depth = depth
         self.tree_sparsity = len(self.leafs)/2**self.tree_depth
+        self.labels_ = - np.ones(n_samples, dtype=int)
+        self.cluster_centers_ = np.zeros((n_samples,n_features))
+        for i,leaf in enumerate(self.leafs):
+            self.labels_[leaf.samples_idx] = int(i)
+            self.cluster_centers_[i,:] = leaf.representative_data_point
+        return self
         
     def fit_predict(self, X, y = None):
         """Compute the clustering and predict cluster index for each sample"""
